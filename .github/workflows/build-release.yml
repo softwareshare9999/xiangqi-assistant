@@ -96,28 +96,31 @@ jobs:
         shell: bash
         run: |
           APP="象棋接管助手"
+          ZIP_NAME="xiangqi-assistant-windows.zip"
           test -f "dist/${APP}/${APP}.exe"
           test -d "dist/${APP}/_internal/engine/bin"
           test -d "dist/${APP}/_internal/models"
           # Flatten nested py7zr paths if any (exe/nnue must sit directly under engine/bin)
           find "dist/${APP}/_internal/engine/bin" -type f \( -name '*.exe' -o -name '*.nnue' \) \
             -exec cp -n {} "dist/${APP}/_internal/engine/bin/" \; 2>/dev/null || true
-          python - <<'PY'
+          # ASCII zip name: gh release upload on Windows mangles Chinese filenames to _.zip
+          python - <<PY
           import shutil, os
           app = "象棋接管助手"
-          zip_base = os.path.join("dist", f"{app}_发布包")
-          if os.path.exists(zip_base + ".zip"):
-              os.remove(zip_base + ".zip")
-          shutil.make_archive(zip_base, "zip", root_dir="dist", base_dir=app)
-          size = os.path.getsize(zip_base + ".zip") // 1024 // 1024
-          print(f"Created {zip_base}.zip ({size} MB)")
+          out = os.path.join("dist", "xiangqi-assistant-windows")
+          if os.path.exists(out + ".zip"):
+              os.remove(out + ".zip")
+          shutil.make_archive(out, "zip", root_dir="dist", base_dir=app)
+          size = os.path.getsize(out + ".zip") // 1024 // 1024
+          print(f"Created {out}.zip ({size} MB)")
           PY
+          test -f "dist/${ZIP_NAME}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: xiangqi-assistant-windows
-          path: dist/象棋接管助手_发布包.zip
+          path: dist/xiangqi-assistant-windows.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -146,5 +149,7 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
         shell: bash
         run: |
-          gh release upload "$TAG" "dist/象棋接管助手_发布包.zip" --clobber
+          # Drop the mangled _.zip from earlier runs if present
+          gh release delete-asset "$TAG" "_.zip" --yes 2>/dev/null || true
+          gh release upload "$TAG" "dist/xiangqi-assistant-windows.zip" --clobber
           echo "Uploaded to https://github.com/${{ github.repository }}/releases/tag/$TAG"
