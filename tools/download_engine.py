@@ -50,7 +50,7 @@ def main():
         targets = [n for n in names
                    if os.path.basename(n) == "pikafish.nnue" or
                    ("Windows" in n and n.endswith(".exe"))]
-        z.extract(members=targets, path=BIN_DIR)
+        z.extract(path=BIN_DIR, targets=targets)
     # 官方包常带一层目录；find_engine_exe 只认 engine/bin 顶层文件
     for root, _dirs, files in os.walk(BIN_DIR):
         for name in files:
