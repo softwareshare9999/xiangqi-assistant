@@ -43,16 +43,34 @@ def main():
               "解压到 engine/bin/ 目录")
         return 1
     print("解压 ...")
+    import shutil
     import py7zr
     with py7zr.SevenZipFile(io.BytesIO(data)) as z:
         names = z.getnames()
         targets = [n for n in names
-                   if n == "pikafish.nnue" or
+                   if os.path.basename(n) == "pikafish.nnue" or
                    ("Windows" in n and n.endswith(".exe"))]
         z.extract(members=targets, path=BIN_DIR)
+    # 官方包常带一层目录；find_engine_exe 只认 engine/bin 顶层文件
+    for root, _dirs, files in os.walk(BIN_DIR):
+        for name in files:
+            if not (name.endswith(".exe") or name.endswith(".nnue")):
+                continue
+            src = os.path.join(root, name)
+            dst = os.path.join(BIN_DIR, name)
+            if os.path.abspath(src) != os.path.abspath(dst):
+                shutil.move(src, dst)
+                print(" -", dst)
+            else:
+                print(" -", dst)
+    for root, dirs, _files in os.walk(BIN_DIR, topdown=False):
+        for d in dirs:
+            p = os.path.join(root, d)
+            try:
+                os.rmdir(p)
+            except OSError:
+                pass
     print("已安装到", BIN_DIR)
-    for n in targets:
-        print(" -", os.path.join(BIN_DIR, os.path.basename(n)))
     return 0
 
 

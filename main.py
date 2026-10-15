@@ -27,12 +27,12 @@ def _install_excepthook():
             pass
         try:
             from PyQt6.QtWidgets import QApplication, QMessageBox
+            from i18n import tr
             if QApplication.instance() is not None:
                 QMessageBox.critical(
-                    None, "出错了",
-                    f"发生未预期的错误，操作未完成：\n\n"
-                    f"{exc_type.__name__}: {exc}\n\n"
-                    f"详细信息已写入：\n{log_path}")
+                    None, tr("出错了"),
+                    tr("发生未预期的错误，操作未完成：\n\n{error}\n\n详细信息已写入：\n{log}",
+                       error=f"{exc_type.__name__}: {exc}", log=log_path))
         except Exception:
             pass
 
@@ -41,14 +41,32 @@ def _install_excepthook():
 
 _install_excepthook()
 
+from PyQt6.QtCore import QLibraryInfo, QLocale, QTranslator  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from gui.main_window import MainWindow  # noqa: E402
+from i18n import (DEFAULT_LANGUAGE, get_language, set_language, tr,  # noqa: E402
+                  ui_font_family)
+from gui.main_window import MainWindow, read_config  # noqa: E402
+
+
+def _install_qt_translator(app: QApplication) -> None:
+    """Qt 自带控件（OK/Cancel 等标准按钮、文件对话框）的翻译。"""
+    translator = QTranslator(app)
+    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if translator.load(QLocale(get_language()), "qtbase", "_", path):
+        app.installTranslator(translator)
 
 
 def main():
+    set_language(read_config().get("language", DEFAULT_LANGUAGE))
     app = QApplication(sys.argv)
-    app.setApplicationName("象棋接管助手")
+    _install_qt_translator(app)
+    if get_language() != "zh":
+        # 系统默认字体若是中文字体（中文版 Windows），越南语声调符号会错位
+        font = app.font()
+        font.setFamily(ui_font_family())
+        app.setFont(font)
+    app.setApplicationName(tr("象棋接管助手"))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

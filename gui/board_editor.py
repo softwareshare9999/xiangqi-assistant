@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel,
                              QPushButton, QSizePolicy, QToolButton, QVBoxLayout,
                              QWidget)
 
-from core.board import PIECE_NAMES, RED, BLACK, side_of
+from core.board import PIECE_NAMES, RED, BLACK, piece_display_name, side_of
+from i18n import tr, ui_font_family
 
 BOARD_BG = QColor(238, 216, 178)
 LINE_COLOR = QColor(90, 60, 30)
@@ -234,12 +235,17 @@ class PiecePalette(QWidget):
                 root.addWidget(lbl)
             row = QHBoxLayout()
             row.setSpacing(3)
-            for key, text, color in items:
+            for key, text, color, tip in items:
                 btn = QToolButton()
                 btn.setText(text)
+                btn.setToolTip(tip)
                 btn.setCheckable(True)
-                btn.setFixedSize(40, 38)
-                fnt = QFont("Microsoft YaHei", 13)
+                if key in PIECE_NAMES:
+                    btn.setFixedSize(40, 38)
+                    fnt = QFont("Microsoft YaHei", 13)
+                else:                       # 工具按钮是文字，宽度随译文
+                    btn.setMinimumSize(40, 38)
+                    fnt = QFont(ui_font_family(), 11)
                 fnt.setBold(True)
                 btn.setFont(fnt)
                 btn.setStyleSheet(
@@ -254,14 +260,15 @@ class PiecePalette(QWidget):
             row.addStretch(1)
             root.addLayout(row)
 
-        red_items = [(k, PIECE_NAMES[k], "#b81e1e")
+        red_items = [(k, PIECE_NAMES[k], "#b81e1e", piece_display_name(k))
                      for k in ("K", "A", "B", "N", "R", "C", "P")]
-        black_items = [(k, PIECE_NAMES[k], "#1e1e1e")
+        black_items = [(k, PIECE_NAMES[k], "#1e1e1e", piece_display_name(k))
                        for k in ("k", "a", "b", "n", "r", "c", "p")]
-        add_row("红方", red_items)
-        add_row("黑方", black_items)
-        add_row("工具", [(ERASE_TOOL, "擦除", "#555"),
-                        (MOVE_TOOL, "移动", "#555")])
+        add_row(tr("红方"), red_items)
+        add_row(tr("黑方"), black_items)
+        add_row(tr("工具"), [
+            (ERASE_TOOL, tr("擦除"), "#555", tr("点击棋子将其擦除（也可右键）")),
+            (MOVE_TOOL, tr("移动"), "#555", tr("先点棋子，再点目标格移动"))])
 
         self._select("P")
 

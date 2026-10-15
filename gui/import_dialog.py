@@ -24,11 +24,16 @@ from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QDialogButtonBox,
 
 from core.board import PIECE_NAMES, RED, BLACK
 from gui.board_editor import BoardEditorWidget, PiecePalette
+from i18n import tr
 from recognition.classifier import grid_to_fen
 from recognition.detector import BoardLocator, auto_detect_corners
 from recognition.pipeline import recognize_screenshot, yolo_available
 
 _CORNER_NAMES = ["左上角交点", "右上角交点", "右下角交点", "左下角交点"]
+
+
+def _corner_name(i: int) -> str:
+    return tr(_CORNER_NAMES[i])
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".tif", ".tiff")
 
@@ -91,7 +96,7 @@ class ImportDialog(QDialog):
 
     def __init__(self, parent=None, model_name: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("导入对局截图")
+        self.setWindowTitle(tr("导入对局截图"))
         self.resize(1150, 760)
         self.setAcceptDrops(True)
         self.model_name = model_name
@@ -110,8 +115,8 @@ class ImportDialog(QDialog):
 
         root = QHBoxLayout(self)
         left = QVBoxLayout()
-        self.image_label = QLabel("把截图拖到这里\n\n"
-                                  "（也可以点下方「打开图片」或按 Ctrl+V 粘贴）")
+        self.image_label = QLabel(tr("把截图拖到这里\n\n"
+                                     "（也可以点下方「打开图片」或按 Ctrl+V 粘贴）"))
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setMinimumSize(640, 560)
         self.image_label.setStyleSheet("border: 1px solid #888; background: #333;")
@@ -119,21 +124,24 @@ class ImportDialog(QDialog):
         left.addWidget(self.image_label, 1)
 
         btn_bar = QHBoxLayout()
-        self.btn_open = QPushButton("打开图片...")
-        self.btn_paste = QPushButton("粘贴截图 (Ctrl+V)")
-        self.btn_auto = QPushButton("自动识别棋盘")
-        self.btn_manual = QPushButton("手动校准四角")
-        self.btn_redo = QPushButton("重新识别棋子")
+        self.btn_open = QPushButton(tr("打开图片..."))
+        self.btn_paste = QPushButton(tr("粘贴截图 (Ctrl+V)"))
+        self.btn_auto = QPushButton(tr("自动识别棋盘"))
+        self.btn_manual = QPushButton(tr("手动校准四角"))
+        self.btn_redo = QPushButton(tr("重新识别棋子"))
         for b in (self.btn_open, self.btn_paste, self.btn_auto,
                   self.btn_manual, self.btn_redo):
             btn_bar.addWidget(b)
         left.addLayout(btn_bar)
-        self.hint_label = QLabel("步骤：载入截图 → 定位棋盘 → 校对识别结果 → 确认")
+        self.hint_label = QLabel(tr("步骤：载入截图 → 定位棋盘 → 校对识别结果 → 确认"))
+        self.hint_label.setWordWrap(True)
         left.addWidget(self.hint_label)
         root.addLayout(left, 3)
 
         right = QVBoxLayout()
-        right.addWidget(QLabel("复刻棋盘（识别结果；用下方调色板点选棋子后点击棋盘修正）:"))
+        hint_right = QLabel(tr("复刻棋盘（识别结果；用下方调色板点选棋子后点击棋盘修正）:"))
+        hint_right.setWordWrap(True)
+        right.addWidget(hint_right)
         self.editor = BoardEditorWidget()
         right.addWidget(self.editor, 1)
 
@@ -142,36 +150,37 @@ class ImportDialog(QDialog):
         right.addWidget(self.palette)
 
         preset_bar = QHBoxLayout()
-        self.btn_clear = QPushButton("清空棋盘")
-        self.btn_initial = QPushButton("设为开局")
+        self.btn_clear = QPushButton(tr("清空棋盘"))
+        self.btn_initial = QPushButton(tr("设为开局"))
         preset_bar.addWidget(self.btn_clear)
         preset_bar.addWidget(self.btn_initial)
         preset_bar.addStretch(1)
         right.addLayout(preset_bar)
 
         color_bar = QHBoxLayout()
-        color_bar.addWidget(QLabel("我方执子:"))
-        self.rb_red = QRadioButton("红方")
-        self.rb_black = QRadioButton("黑方")
+        color_bar.addWidget(QLabel(tr("我方执子:")))
+        self.rb_red = QRadioButton(tr("红方"))
+        self.rb_black = QRadioButton(tr("黑方"))
         self.rb_red.setChecked(True)
         color_bar.addWidget(self.rb_red)
         color_bar.addWidget(self.rb_black)
         right.addLayout(color_bar)
 
         turn_bar = QHBoxLayout()
-        turn_bar.addWidget(QLabel("当前轮到:"))
-        self.rb_turn_red = QRadioButton("红方")
-        self.rb_turn_black = QRadioButton("黑方")
+        turn_bar.addWidget(QLabel(tr("当前轮到:")))
+        self.rb_turn_red = QRadioButton(tr("红方"))
+        self.rb_turn_black = QRadioButton(tr("黑方"))
         self.rb_turn_red.setChecked(True)
         turn_bar.addWidget(self.rb_turn_red)
         turn_bar.addWidget(self.rb_turn_black)
         right.addLayout(turn_bar)
 
-        self.chk_red_top = QCheckBox("截图红方在上（执黑时勾选，棋盘会随之翻转）")
+        self.chk_red_top = QCheckBox(tr("截图红方在上（执黑时勾选，棋盘会随之翻转）"))
         self.chk_red_top.toggled.connect(self._on_red_top_toggled)
         right.addWidget(self.chk_red_top)
 
         self.lbl_conf = QLabel("")
+        self.lbl_conf.setWordWrap(True)
         right.addWidget(self.lbl_conf)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
@@ -192,12 +201,12 @@ class ImportDialog(QDialog):
     # ---------------------------------------------------------------- 载入
     def _open_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择对局截图", "",
-            "图片 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)")
+            self, tr("选择对局截图"), "",
+            tr("图片 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)"))
         if not path:
             return
         if not self.load_from_path(path):
-            QMessageBox.warning(self, "导入", "无法读取该图片")
+            QMessageBox.warning(self, tr("导入"), tr("无法读取该图片"))
 
     def _paste_clipboard(self):
         """粘贴截图：支持剪贴板里的图片数据，也支持复制的图片文件路径。"""
@@ -206,9 +215,9 @@ class ImportDialog(QDialog):
         img = image_from_mime(mime)
         if img is None:
             QMessageBox.information(
-                self, "导入",
-                "剪贴板中没有可用的图片。\n"
-                "可以用截图工具截图后按 Ctrl+V，或直接把图片文件拖进本窗口。")
+                self, tr("导入"),
+                tr("剪贴板中没有可用的图片。\n"
+                   "可以用截图工具截图后按 Ctrl+V，或直接把图片文件拖进本窗口。"))
             return
         self._set_image(img)
 
@@ -221,7 +230,7 @@ class ImportDialog(QDialog):
         md = event.mimeData()
         if md.hasImage() or md.hasUrls() or md.hasText():
             event.acceptProposedAction()
-            self.hint_label.setText("松开鼠标即可导入该截图")
+            self.hint_label.setText(tr("松开鼠标即可导入该截图"))
         else:
             event.ignore()
 
@@ -232,7 +241,7 @@ class ImportDialog(QDialog):
     def dropEvent(self, event):
         img = image_from_mime(event.mimeData())
         if img is None:
-            self.hint_label.setText("拖入的内容不是可识别的图片，请拖入截图文件")
+            self.hint_label.setText(tr("拖入的内容不是可识别的图片，请拖入截图文件"))
             event.ignore()
             return
         event.acceptProposedAction()
@@ -300,8 +309,8 @@ class ImportDialog(QDialog):
         self.board_box = None
         self.click_points = []
         self._manual_mode = True
-        self.hint_label.setText("请依次点击棋盘 " +
-                                "、".join(_CORNER_NAMES))
+        self.hint_label.setText(tr("请依次点击棋盘 {corners}", corners=tr("、").join(
+            _corner_name(i) for i in range(len(_CORNER_NAMES)))))
         self._refresh_image()
 
     def _on_image_click(self, event):
@@ -326,9 +335,10 @@ class ImportDialog(QDialog):
         if len(self.click_points) == 4:
             corners = [(p.x(), p.y()) for p in self.click_points]
             self._apply_corners(corners)
-            self.hint_label.setText("手动校准完成，已识别棋子。请校对后确认。")
+            self.hint_label.setText(tr("手动校准完成，已识别棋子。请校对后确认。"))
         else:
-            self.hint_label.setText("请点击 " + _CORNER_NAMES[len(self.click_points)])
+            self.hint_label.setText(tr("请点击 {corner}",
+                                       corner=_corner_name(len(self.click_points))))
         self._refresh_image()
 
     _manual_mode = False
@@ -382,33 +392,35 @@ class ImportDialog(QDialog):
 
         if error and n_piece == 0:
             self.lbl_conf.setText(
-                f"⚠ {error}\n可点「手动校准四角」重试，或直接在右侧调色板手动摆放。")
+                tr("⚠ {error}\n可点「手动校准四角」重试，或直接在右侧调色板手动摆放。",
+                   error=error))
             self.lbl_conf.setStyleSheet("color: #b00;")
         elif n_piece == 0:
             self.lbl_conf.setText(
-                "⚠ 未识别出任何棋子。请直接用下方调色板手动摆放"
-                "（或点「设为开局」后微调）。")
+                tr("⚠ 未识别出任何棋子。请直接用下方调色板手动摆放"
+                   "（或点「设为开局」后微调）。"))
             self.lbl_conf.setStyleSheet("color: #b00;")
         elif n_piece < 12:
-            kind = "检测模型" if source == "yolo" else "备用识别"
+            kind = tr("检测模型") if source == "yolo" else tr("备用识别")
             self.lbl_conf.setText(
-                f"⚠ {kind}只找到 {n_piece} 个棋子，很可能不准。"
-                f"请对照左侧原图用调色板修正，或改用「手动摆局」。")
+                tr("⚠ {kind}只找到 {n} 个棋子，很可能不准。"
+                   "请对照左侧原图用调色板修正，或改用「手动摆局」。",
+                   kind=kind, n=n_piece))
             self.lbl_conf.setStyleSheet("color: #b60;")
         else:
-            kind = "检测模型" if source == "yolo" else "备用识别（准确率较低）"
+            kind = tr("检测模型") if source == "yolo" else tr("备用识别（准确率较低）")
             n_corr = len(getattr(res, "corrections", []) or [])
             n_cls = getattr(res, "skin_classes", 0) or 0
-            msg = (f"{kind}识别出 {n_piece} 个棋子"
-                   + (f"，{self._n_unknown} 格不确定" if self._n_unknown else "")
-                   + "。请对照左侧原图核对，错处用调色板点选后点击棋盘修正。")
+            msg = (tr("{kind}识别出 {n} 个棋子", kind=kind, n=n_piece)
+                   + (tr("，{n} 格不确定", n=self._n_unknown) if self._n_unknown else "")
+                   + tr("。请对照左侧原图核对，错处用调色板点选后点击棋盘修正。"))
             tail = []
             if n_corr:
-                tail.append(f"皮肤模板已自动修正 {n_corr} 处（棋盘上橙圈标注，请复核）")
+                tail.append(tr("皮肤模板已自动修正 {n} 处（棋盘上橙圈标注，请复核）", n=n_corr))
             if n_cls:
-                tail.append(f"皮肤模板已校准 {n_cls} 类；点 OK 后会按本局继续更新模板")
+                tail.append(tr("皮肤模板已校准 {n} 类；点 OK 后会按本局继续更新模板", n=n_cls))
             if tail:
-                msg += "\n" + "；".join(tail) + "。"
+                msg += "\n" + tr("；").join(tail) + tr("。")
             if warning:
                 msg = "⚠ " + warning + "\n" + msg
             self.lbl_conf.setText(msg)
@@ -462,7 +474,7 @@ class ImportDialog(QDialog):
         for i, p in enumerate(self.click_points):
             painter.setPen(QPen(QColor(0, 255, 120), 3))
             painter.drawEllipse(p, 7, 7)
-            painter.drawText(p + QPointF(10, -10), _CORNER_NAMES[i])
+            painter.drawText(p + QPointF(10, -10), _corner_name(i))
         painter.end()
         self.image_label.setPixmap(pixmap.scaled(
             self.image_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
@@ -472,7 +484,7 @@ class ImportDialog(QDialog):
     def _accept(self):
         grid = self.editor.get_grid()
         if not any(p for row in grid for p in row):
-            QMessageBox.information(self, "导入", "棋盘是空的，请先摆放棋子。")
+            QMessageBox.information(self, tr("导入"), tr("棋盘是空的，请先摆放棋子。"))
             return
         my = RED if self.rb_red.isChecked() else BLACK
         stm = RED if self.rb_turn_red.isChecked() else BLACK
@@ -484,9 +496,10 @@ class ImportDialog(QDialog):
         problem = board.validate_position()
         if problem:
             QMessageBox.warning(
-                self, "导入",
-                f"局面不合法：{problem}。\n"
-                f"请在右侧棋盘上用调色板修正（右键可快速擦除），再点 OK。")
+                self, tr("导入"),
+                tr("局面不合法：{problem}。\n"
+                   "请在右侧棋盘上用调色板修正（右键可快速擦除），再点 OK。",
+                   problem=problem))
             return
         self.fen = fen
         self.my_color = my
@@ -511,8 +524,9 @@ class ImportDialog(QDialog):
                                   res.red_at_top, grid, existing)
             skin.save_templates(path, merged)
             self.lbl_conf.setText(
-                self.lbl_conf.text()
-                + f"\n✓ 已按本局更新皮肤模板（共 {len(merged)} 类），"
-                  f"之后的识别会自动用它们校验。")
+                self.lbl_conf.text() + "\n"
+                + tr("✓ 已按本局更新皮肤模板（共 {n} 类），之后的识别会自动用它们校验。",
+                     n=len(merged)))
         except Exception as e:
-            self.lbl_conf.setText(self.lbl_conf.text() + f"\n（皮肤模板更新失败: {e}）")
+            self.lbl_conf.setText(self.lbl_conf.text() + "\n"
+                                  + tr("（皮肤模板更新失败: {e}）", e=e))

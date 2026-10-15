@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
 
 from core.board import BLACK, RED, Board, side_of
 from gui.board_editor import BoardEditorWidget, PiecePalette
+from i18n import tr
 from recognition.classifier import grid_to_fen
 
 
@@ -21,14 +22,14 @@ class SetupDialog(QDialog):
 
     def __init__(self, parent=None, fen: str = None, my_color: str = RED):
         super().__init__(parent)
-        self.setWindowTitle("手动摆局")
+        self.setWindowTitle(tr("手动摆局"))
         self.resize(760, 700)
         self.fen: Optional[str] = None
         self.my_color: Optional[str] = None
 
         root = QVBoxLayout(self)
-        tip = QLabel("点选下方棋子 → 点击棋盘落子；右键擦除。"
-                     "支持「移动」工具拖动已有棋子。")
+        tip = QLabel(tr("点选下方棋子 → 点击棋盘落子；右键擦除。"
+                        "支持「移动」工具拖动已有棋子。"))
         tip.setWordWrap(True)
         root.addWidget(tip)
 
@@ -41,9 +42,9 @@ class SetupDialog(QDialog):
         root.addWidget(self.palette)
 
         preset = QHBoxLayout()
-        self.btn_initial = QPushButton("设为开局")
-        self.btn_clear = QPushButton("清空")
-        self.btn_flip = QPushButton("翻转显示")
+        self.btn_initial = QPushButton(tr("设为开局"))
+        self.btn_clear = QPushButton(tr("清空"))
+        self.btn_flip = QPushButton(tr("翻转显示"))
         preset.addWidget(self.btn_initial)
         preset.addWidget(self.btn_clear)
         preset.addWidget(self.btn_flip)
@@ -51,17 +52,17 @@ class SetupDialog(QDialog):
         root.addLayout(preset)
 
         opts = QHBoxLayout()
-        opts.addWidget(QLabel("我方执子:"))
-        self.rb_red = QRadioButton("红方")
-        self.rb_black = QRadioButton("黑方")
+        opts.addWidget(QLabel(tr("我方执子:")))
+        self.rb_red = QRadioButton(tr("红方"))
+        self.rb_black = QRadioButton(tr("黑方"))
         self.rb_red.setChecked(my_color != BLACK)
         self.rb_black.setChecked(my_color == BLACK)
         opts.addWidget(self.rb_red)
         opts.addWidget(self.rb_black)
         opts.addSpacing(16)
-        opts.addWidget(QLabel("当前轮到:"))
-        self.rb_turn_red = QRadioButton("红方")
-        self.rb_turn_black = QRadioButton("黑方")
+        opts.addWidget(QLabel(tr("当前轮到:")))
+        self.rb_turn_red = QRadioButton(tr("红方"))
+        self.rb_turn_black = QRadioButton(tr("黑方"))
         self.rb_turn_red.setChecked(True)
         opts.addWidget(self.rb_turn_red)
         opts.addWidget(self.rb_turn_black)
@@ -100,20 +101,20 @@ class SetupDialog(QDialog):
                     if p and side_of(p) == RED)
         n_black = sum(1 for row in grid for p in row
                       if p and side_of(p) == BLACK)
-        self.lbl_stat.setText(f"红方 {n_red} 子，黑方 {n_black} 子"
-                              f"（标准开局各 16 子）")
+        self.lbl_stat.setText(tr("红方 {n_red} 子，黑方 {n_black} 子（标准开局各 16 子）",
+                                 n_red=n_red, n_black=n_black))
 
     def _accept(self):
         grid = self.editor.get_grid()
         if not any(p for row in grid for p in row):
-            self.lbl_stat.setText("⚠ 棋盘为空，请先摆放棋子")
+            self.lbl_stat.setText(tr("⚠ 棋盘为空，请先摆放棋子"))
             return
         stm = RED if self.rb_turn_red.isChecked() else BLACK
         fen = grid_to_fen(grid, stm)
         board = Board(fen)
         problem = board.validate_position()
         if problem:
-            self.lbl_stat.setText(f"⚠ 局面不合法：{problem}（请检查摆放）")
+            self.lbl_stat.setText(tr("⚠ 局面不合法：{problem}（请检查摆放）", problem=problem))
             return
         self.fen = fen
         self.my_color = RED if self.rb_red.isChecked() else BLACK

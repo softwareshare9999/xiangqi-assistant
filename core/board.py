@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Iterator, List, Optional, Tuple
 
+from i18n import get_language, tr
+
 INITIAL_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1"
 
 RED, BLACK = "w", "b"
@@ -311,30 +313,31 @@ class Board:
             for letter in (up, up.lower()):
                 n = counts.get(letter, 0)
                 if n > lim:
-                    who = "红方" if letter.isupper() else "黑方"
-                    return f"{who}{name}超过 {lim} 个（当前 {n} 个）"
+                    who = tr("红方") if letter.isupper() else tr("黑方")
+                    return tr("{who}{name}超过 {lim} 个（当前 {n} 个）",
+                              who=who, name=tr(name), lim=lim, n=n)
         for side, letter, who in ((RED, "K", "红方"), (BLACK, "k", "黑方")):
             if counts.get(letter, 0) != 1:
-                return f"{who}缺少将/帅"
+                return tr("{who}缺少将/帅", who=tr(who))
         if self.kings_face():
-            return "将帅照面（同一路无遮挡），不是合法局面"
+            return tr("将帅照面（同一路无遮挡），不是合法局面")
         # 兵/卒不可能留在己方底线（引擎会拒收这类局面并直接退出）
         for c in range(COLS):
             if self.grid[ROWS - 1][c] == "P":
-                return "红兵不可能在己方底线"
+                return tr("红兵不可能在己方底线")
             if self.grid[0][c] == "p":
-                return "黑卒不可能在己方底线"
+                return tr("黑卒不可能在己方底线")
         for side in (RED, BLACK):
             k = self.find_king(side)
             if k is not None and not in_palace(k[0], k[1], side):
-                who = "红方" if side == RED else "黑方"
-                return f"{who}将/帅不在九宫内"
+                who = tr("红方") if side == RED else tr("黑方")
+                return tr("{who}将/帅不在九宫内", who=who)
         # 非行棋方被将军同样非法：上一手不能让自己的将处于被将状态。
         # Pikafish 会拒收这类局面并直接退出（实测确认），必须拦住。
         other = BLACK if self.side_to_move == RED else RED
         if self.in_check(other):
-            who = "黑方" if other == BLACK else "红方"
-            return f"{who}（非行棋方）正被将军，轮次疑似有误"
+            who = tr("黑方") if other == BLACK else tr("红方")
+            return tr("{who}（非行棋方）正被将军，轮次疑似有误", who=who)
         return None
 
     def _make(self, move: Move) -> Optional[str]:
@@ -383,14 +386,17 @@ class Board:
     def is_game_over(self) -> Tuple[bool, Optional[str]]:
         """返回 (是否结束, 结果描述)。象棋中被困毙/被将死均判负。"""
         if self.find_king(RED) is None:
-            return True, "黑方胜（红帅被吃）"
+            return True, tr("黑方胜（红帅被吃）")
         if self.find_king(BLACK) is None:
-            return True, "红方胜（黑将被吃）"
+            return True, tr("红方胜（黑将被吃）")
         if not self.legal_moves():
-            loser = "红方" if self.side_to_move == RED else "黑方"
+            red_lost = self.side_to_move == RED
+            loser = tr("红方") if red_lost else tr("黑方")
+            winner = tr("黑方") if red_lost else tr("红方")
             check = self.in_check(self.side_to_move)
-            reason = "被将死" if check else "被困毙"
-            return True, f"{'黑方' if loser == '红方' else '红方'}胜（{loser}{reason}）"
+            reason = tr("被将死") if check else tr("被困毙")
+            return True, tr("{winner}胜（{loser}{reason}）",
+                            winner=winner, loser=loser, reason=reason)
         return False, None
 
 
@@ -473,6 +479,59 @@ def move_to_chinese(board: Board, move: Move) -> str:
         else:
             action = "退" + _step_num(side, abs(tr - fr))
     return frm + action
+
+
+# 越南记谱的兵种缩写：Tg 将/帅(Tướng)、S 士(Sĩ)、T 象(Tượng)、M 马(Mã)、
+# X 车(Xe)、P 炮(Pháo)、B 兵/卒(Binh/Tốt)，红黑通用
+_VI_LETTERS = {"K": "Tg", "A": "S", "B": "T", "N": "M", "R": "X", "C": "P", "P": "B"}
+
+
+def move_to_vietnamese(board: Board, move: Move) -> str:
+    """越南纵线记法（如 P2-5、M8.7、Xt/1）：'.' 进、'/' 退、'-' 平。
+
+    纵线号双方都用阿拉伯数字、各自从己方右侧数起；同列同类棋子用
+    t(前)/g(中)/s(后) 后缀区分。需要在走法尚未执行的棋盘上调用。
+    """
+    (fr, fc), (tr_, tc) = move
+    piece = board.piece_at(fr, fc)
+    if piece is None:
+        return move_to_iccs(move)
+    side = side_of(piece)
+    red_side = side == RED
+
+    def file_no(col: int) -> str:
+        return str(9 - col) if red_side else str(col + 1)
+
+    letter = _VI_LETTERS[piece.upper()]
+    same_col = [r for r in range(ROWS) if board.piece_at(r, fc) == piece]
+    if len(same_col) >= 2:
+        ordered = sorted(same_col) if red_side else sorted(same_col, reverse=True)
+        idx = ordered.index(fr)
+        if len(ordered) == 2 or idx in (0, len(ordered) - 1):
+            frm = letter + ("t" if idx == 0 else "s")
+        else:
+            frm = letter + "g"
+    else:
+        frm = letter + file_no(fc)
+
+    fwd = -1 if red_side else 1
+    diagonal = piece.upper() in ("N", "B", "A")
+    if tr_ == fr:
+        return frm + "-" + file_no(tc)
+    sign = "." if (tr_ - fr) * fwd > 0 else "/"
+    return frm + sign + (file_no(tc) if diagonal else str(abs(tr_ - fr)))
+
+
+def move_to_text(board: Board, move: Move) -> str:
+    """按当前界面语言给出着法记法（中文纵线记法 / 越南记法）。"""
+    if get_language() == "zh":
+        return move_to_chinese(board, move)
+    return move_to_vietnamese(board, move)
+
+
+def piece_display_name(piece: str) -> str:
+    """棋子在界面文字中的名称（按当前语言）。"""
+    return tr(PIECE_NAMES[piece])
 
 def infer_move_from_observation(board: "Board", observed_grid: List[List[Optional[str]]],
                                 min_score: float = 0.985,

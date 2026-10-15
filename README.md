@@ -445,7 +445,7 @@ VinXiangQi 以 **GNU GPL v3.0** 发布，因此：
 
 ```bat
 .venv\Scripts\pip install pyinstaller
-.venv\Scripts\python toolsuild_release.py
+.venv\Scripts\python tools\build_release.py
 ```
 
 产物：`dist\象棋接管助手_发布包.zip`（约 210 MB）。朋友**解压后双击

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QListWidget,
                              QListWidgetItem, QVBoxLayout, QWidget)
 
 from core.board import RED, BLACK
+from i18n import tr
 
 
 def cp_to_winrate(cp: float) -> float:
@@ -74,13 +75,13 @@ class EnginePanel(QWidget):
         self.my_color: Optional[str] = None
         self.pv_lines: List[dict] = []
         self._stm = RED
-        self._engine_name = "引擎"
+        self._engine_name = tr("引擎")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        title = QLabel("引擎分析")
+        title = QLabel(tr("引擎分析"))
         font = QFont()
         font.setBold(True)
         title.setFont(font)
@@ -89,21 +90,19 @@ class EnginePanel(QWidget):
         # 评估条 + 红黑端点标注
         bar_row = QHBoxLayout()
         bar_row.setSpacing(4)
-        lbl_red = QLabel("红")
+        lbl_red = QLabel(tr("红"))
         lbl_red.setStyleSheet("color:#c62828; font-weight:bold;")
-        lbl_red.setFixedWidth(16)
         bar_row.addWidget(lbl_red)
         self.eval_bar = _EvalBar()
         bar_row.addWidget(self.eval_bar, 1)
-        lbl_black = QLabel("黑")
+        lbl_black = QLabel(tr("黑"))
         lbl_black.setStyleSheet("color:#e0e0e0; background:#222;"
                                 "font-weight:bold; padding:0 3px;")
-        lbl_black.setFixedWidth(16)
         bar_row.addWidget(lbl_black)
         layout.addLayout(bar_row)
 
         # 主评估（红方视角，显式标出谁领先）
-        self.eval_label = QLabel("评估：等待分析…")
+        self.eval_label = QLabel(tr("评估：等待分析…"))
         font2 = QFont()
         font2.setPointSize(12)
         font2.setBold(True)
@@ -127,20 +126,20 @@ class EnginePanel(QWidget):
         line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
 
-        self.turn_label = QLabel("当前轮到：—")
+        self.turn_label = QLabel(tr("当前轮到：—"))
         self.turn_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.turn_label)
 
-        self.info_label = QLabel("深度 --   NPS --")
+        self.info_label = QLabel(tr("深度 --   NPS --"))
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.info_label)
 
-        layout.addWidget(QLabel("候选着法（MultiPV，按红方视角评估）:"))
+        layout.addWidget(QLabel(tr("候选着法（MultiPV，按红方视角评估）:")))
         self.pv_list = QListWidget()
         self.pv_list.setMinimumHeight(150)
         layout.addWidget(self.pv_list, 1)
 
-        layout.addWidget(QLabel("着法记录:"))
+        layout.addWidget(QLabel(tr("着法记录:")))
         self.move_list = QListWidget()
         layout.addWidget(self.move_list, 1)
 
@@ -163,8 +162,8 @@ class EnginePanel(QWidget):
     def set_stm(self, stm: str) -> None:
         """设置当前行棋方（红/黑）。"""
         self._stm = stm
-        who = "红方" if stm == RED else "黑方"
-        self.turn_label.setText(f"当前轮到：<b>{who}</b>走子")
+        who = tr("红方") if stm == RED else tr("黑方")
+        self.turn_label.setText(tr("当前轮到：<b>{who}</b>走子", who=who))
         self._refresh_myside()
 
     def set_engine_name(self, name: str) -> None:
@@ -175,9 +174,9 @@ class EnginePanel(QWidget):
         self.pv_lines.clear()
         self.pv_list.clear()
         self.eval_bar.set_value(50)
-        self.eval_label.setText("评估：等待分析…")
+        self.eval_label.setText(tr("评估：等待分析…"))
         self.winrate_label.setText("")
-        self.info_label.setText(f"深度 --   NPS --\n{self._engine_name}")
+        self.info_label.setText(tr("深度 --   NPS --") + f"\n{self._engine_name}")
 
     # ---------------------------------------------------------------- 评估换算
     def _fmt_lead(self, cp: Optional[float], kind: str = "cp") -> str:
@@ -186,51 +185,53 @@ class EnginePanel(QWidget):
             return "—"
         if kind == "mate":
             n = int(abs(cp))
-            who = "红方" if cp > 0 else "黑方"
-            return f"{who} {n} 步内取胜"
+            who = tr("红方") if cp > 0 else tr("黑方")
+            return tr("{who} {n} 步内取胜", who=who, n=n)
         if abs(cp) < 1:
-            return "双方均势"
-        who = "红方" if cp > 0 else "黑方"
-        return f"{who}领先 {abs(cp) / 100:.2f}"
+            return tr("双方均势")
+        who = tr("红方") if cp > 0 else tr("黑方")
+        return tr("{who}领先 {lead:.2f}", who=who, lead=abs(cp) / 100)
 
     def _refresh_myside(self) -> None:
         if self.my_color is None:
-            self.myside_label.setText("（未设定我方执子）")
+            self.myside_label.setText(tr("（未设定我方执子）"))
             return
-        side = "红方" if self.my_color == RED else "黑方"
+        side = tr("红方") if self.my_color == RED else tr("黑方")
         if not self.pv_lines:
-            self.myside_label.setText(f"你执{side}")
+            self.myside_label.setText(tr("你执{side}", side=side))
             return
         top = self.pv_lines[0]
         cp = red_cp(top.get("score"), top.get("stm", self._stm))
         if cp is None:
-            self.myside_label.setText(f"你执{side}")
+            self.myside_label.setText(tr("你执{side}", side=side))
             return
         kind = top.get("score_kind", "cp")
+        good = False
         if kind == "mate":
-            mine = (cp > 0) == (self.my_color == RED)
-            txt = "你即将取胜" if mine else "你即将被将死"
+            good = (cp > 0) == (self.my_color == RED)
+            txt = tr("你即将取胜") if good else tr("你即将被将死")
         elif abs(cp) < 1:
-            txt = "局势均势"
+            txt = tr("局势均势")
         else:
-            mine = (cp > 0) == (self.my_color == RED)
-            txt = f"你{'领先' if mine else '落后'} {abs(cp) / 100:.2f}"
-        self.myside_label.setText(f"你执{side}：{txt}")
+            good = (cp > 0) == (self.my_color == RED)
+            txt = (tr("你领先 {lead:.2f}", lead=abs(cp) / 100) if good
+                   else tr("你落后 {lead:.2f}", lead=abs(cp) / 100))
+        self.myside_label.setText(tr("你执{side}：{txt}", side=side, txt=txt))
         self.myside_label.setStyleSheet(
-            "color:#1b5e20; font-weight:bold;"
-            if ("领先" in txt or txt == "你即将取胜")
+            "color:#1b5e20; font-weight:bold;" if good
             else "color:#b71c1c; font-weight:bold;")
 
     def _refresh_info(self) -> None:
         if not self.pv_lines:
-            self.info_label.setText(f"深度 --   NPS --\n{self._engine_name}")
+            self.info_label.setText(tr("深度 --   NPS --") + f"\n{self._engine_name}")
             return
         top = self.pv_lines[0]
         self.info_label.setText(
-            f"深度 {top.get('depth', '--')}/{top.get('seldepth', '--')}   "
-            f"NPS {(top.get('nps') or 0) // 1000}k   "
-            f"置换表 {(top.get('hashfull') or 0) / 10:.0f}%\n"
-            f"{self._engine_name}")
+            tr("深度 {depth}/{seldepth}   NPS {knps}k   置换表 {hashfull:.0f}%",
+               depth=top.get("depth", "--"), seldepth=top.get("seldepth", "--"),
+               knps=(top.get("nps") or 0) // 1000,
+               hashfull=(top.get("hashfull") or 0) / 10)
+            + f"\n{self._engine_name}")
 
     # ---------------------------------------------------------------- 内部
     @pyqtSlot(dict)
@@ -244,14 +245,15 @@ class EnginePanel(QWidget):
         cp = red_cp(top.get("score"), top.get("stm", self._stm))
         kind = top.get("score_kind", "cp")
         if cp is not None:
-            self.eval_label.setText("评估：" + self._fmt_lead(cp, kind))
+            self.eval_label.setText(tr("评估：{lead}", lead=self._fmt_lead(cp, kind)))
             if kind == "mate":
                 wr = 100.0 if cp > 0 else 0.0
             else:
                 wr = cp_to_winrate(cp)
             self.eval_bar.set_value(wr)
             self.winrate_label.setText(
-                f"红方胜率 {wr:.0f}%　·　黑方胜率 {100 - wr:.0f}%")
+                tr("红方胜率 {red:.0f}%　·　黑方胜率 {black:.0f}%",
+                   red=wr, black=100 - wr))
         self._refresh_info()
         self._refresh_myside()
         self._refresh_pv_list()
@@ -265,12 +267,12 @@ class EnginePanel(QWidget):
         for info in self.pv_lines:
             # 标签用该条 info 自己的视角（预计算期间被搜索局面可能与
             # 当前轮次不同，用面板 stm 会把"黑方候选着法"标成红方）
-            mover = "红" if info.get("stm", self._stm) == RED else "黑"
+            mover = tr("红方") if info.get("stm", self._stm) == RED else tr("黑方")
             cp = red_cp(info.get("score"), info.get("stm", self._stm))
             kind = info.get("score_kind", "cp")
             lead = self._fmt_lead(cp, kind)
             pv_cn = info.get("pv_cn") or info.get("pv") or []
             seq = " ".join(pv_cn[:6])
             item = QListWidgetItem(
-                f"{info.get('multipv', 1)}. [{mover}方] {lead}   {seq}")
+                f"{info.get('multipv', 1)}. [{mover}] {lead}   {seq}")
             self.pv_list.addItem(item)

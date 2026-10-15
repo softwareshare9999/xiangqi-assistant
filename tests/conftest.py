@@ -19,6 +19,16 @@ def qapp():
 
 
 @pytest.fixture(autouse=True)
+def ui_language():
+    """既有测试按中文界面断言文字；越南语界面由 test_i18n 显式切换覆盖。"""
+    import i18n
+    prev = i18n.get_language()
+    i18n.set_language("zh")
+    yield
+    i18n.set_language(prev)
+
+
+@pytest.fixture(autouse=True)
 def no_modal_dialogs(monkeypatch):
     """屏蔽所有模态弹窗。
 

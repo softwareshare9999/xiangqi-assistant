@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-# (显示名, 着法说明, 红方着法序列)
+from i18n import tr
+
+# (显示名, 着法说明, 红方着法序列)；显示名同时是配置里保存的键
 OPENINGS: List[Tuple[str, str, List[str]]] = [
     ("", "引擎选最优（默认）", []),
     ("中炮（当头炮）", "炮二平五", ["h2e2"]),
@@ -62,3 +64,13 @@ def opening_tip(name: str) -> str:
 
 def opening_names() -> List[str]:
     return [name for name, _tip, _moves in OPENINGS]
+
+
+def opening_label(name: str) -> str:
+    """下拉框显示文字：开局名 +（红方视角着法），按当前界面语言。"""
+    if not name:
+        return tr("默认（引擎选最优）")
+    from core.board import Board, iccs_to_move, move_to_text
+    moves = _BY_NAME.get(name) or []
+    tip = tr("、").join(move_to_text(Board(), iccs_to_move(m)) for m in moves)
+    return tr("{name}（{tip}）", name=tr(name), tip=tip)

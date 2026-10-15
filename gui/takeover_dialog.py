@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QPushButton,
                              QRadioButton, QVBoxLayout)
 
 from core.board import BLACK, RED
+from i18n import tr
 
 # (我方执子, 当前轮到我方?)
 OPTIONS = [
@@ -27,53 +28,56 @@ class TakeoverDialog(QDialog):
     def __init__(self, parent=None, red_at_top: bool = False,
                  window_title: str = "", n_pieces: int = 0):
         super().__init__(parent)
-        self.setWindowTitle("一键接管 · 确认")
+        self.setWindowTitle(tr("一键接管 · 确认"))
         self.resize(470, 300)
         derived = BLACK if red_at_top else RED
         self.my_color: str = derived
         self.my_turn_now: bool = True
+        mine = tr("黑方") if derived == BLACK else tr("红方")
+        other = tr("红方") if derived == BLACK else tr("黑方")
 
         layout = QVBoxLayout(self)
-        info = QLabel(f"已找到对局窗口：「{window_title[:30]}」"
-                      f"（识别 {n_pieces} 颗棋子）")
+        info = QLabel(tr("已找到对局窗口：「{title}」（识别 {n} 颗棋子）",
+                         title=window_title[:30], n=n_pieces))
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        ori = QLabel(f"检测到 {'红方在上方' if red_at_top else '红方在下方'}"
-                     f" —— 按惯例你的棋子在"
-                     f"{'上' if red_at_top else '下'}半屏，"
-                     f"推断你执{'黑方' if derived == BLACK else '红方'}。")
+        if red_at_top:
+            ori_text = tr("检测到 红方在上方 —— 按惯例你的棋子在上半屏，推断你执{side}。",
+                          side=mine)
+        else:
+            ori_text = tr("检测到 红方在下方 —— 按惯例你的棋子在下半屏，推断你执{side}。",
+                          side=mine)
+        ori = QLabel(ori_text)
         ori.setWordWrap(True)
         ori.setStyleSheet("color:#1b5e20;")
         layout.addWidget(ori)
 
         layout.addSpacing(4)
-        h1 = QLabel("我执（一般不用改，自动按 JJ 惯例推断）：")
+        h1 = QLabel(tr("我执（一般不用改，自动按 JJ 惯例推断）："))
         layout.addWidget(h1)
-        self.rb_my_auto = QRadioButton(
-            f"自动推断：我执{'黑方' if derived == BLACK else '红方'}")
+        self.rb_my_auto = QRadioButton(tr("自动推断：我执{side}", side=mine))
         self.rb_my_auto.setChecked(True)
         layout.addWidget(self.rb_my_auto)
         self.rb_my_flip = QRadioButton(
-            f"反过来：我执{'红方' if derived == BLACK else '黑方'}"
-            "（观战/代他人走时选这个）")
+            tr("反过来：我执{side}（观战/代他人走时选这个）", side=other))
         layout.addWidget(self.rb_my_flip)
 
         layout.addSpacing(4)
-        h2 = QLabel("现在轮到谁走：")
+        h2 = QLabel(tr("现在轮到谁走："))
         f = h2.font()
         f.setBold(True)
         h2.setFont(f)
         layout.addWidget(h2)
-        self.rb_turn_me = QRadioButton("轮到我方（软件立即开始走子）")
+        self.rb_turn_me = QRadioButton(tr("轮到我方（软件立即开始走子）"))
         self.rb_turn_me.setChecked(True)
         layout.addWidget(self.rb_turn_me)
-        self.rb_turn_opp = QRadioButton("轮到对方（等对手走完自动接上）")
+        self.rb_turn_opp = QRadioButton(tr("轮到对方（等对手走完自动接上）"))
         layout.addWidget(self.rb_turn_opp)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                    QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("开始接管")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("开始接管"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -96,7 +100,7 @@ class VerifyBoardDialog(QDialog):
 
     def __init__(self, parent=None, grid=None, my_color=RED):
         super().__init__(parent)
-        self.setWindowTitle("确认接管局面（一次性，约 10 秒）")
+        self.setWindowTitle(tr("确认接管局面（一次性，约 10 秒）"))
         self.resize(720, 760)
         self.confirmed_grid = None
         self.flipped = False        # 用户是否整盘翻转了 180°（红黑上下反了）
@@ -104,14 +108,14 @@ class VerifyBoardDialog(QDialog):
         from gui.board_editor import BoardEditorWidget, PiecePalette
 
         root = QVBoxLayout(self)
-        tip = QLabel("对照 JJ 真实局面：识别错的棋子——左边选棋子后点击棋盘修正"
-                     "（右键擦除）。全对就直接点 OK。")
+        tip = QLabel(tr("对照 JJ 真实局面：识别错的棋子——左边选棋子后点击棋盘修正"
+                        "（右键擦除）。全对就直接点 OK。"))
         tip.setWordWrap(True)
         root.addWidget(tip)
 
         # 方向识别反了（复刻盘与 JJ 上下相反）时：先整盘翻转，再逐格修正
         self.btn_flip = QPushButton(
-            "🔄 翻转棋盘（复刻盘与 JJ 上下相反时点这里，翻转后再逐格修正）")
+            tr("🔄 翻转棋盘（复刻盘与 JJ 上下相反时点这里，翻转后再逐格修正）"))
         self.btn_flip.clicked.connect(self._flip_board)
         root.addWidget(self.btn_flip)
 
@@ -130,7 +134,7 @@ class VerifyBoardDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                    QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确认，开始下棋")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("确认，开始下棋"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)

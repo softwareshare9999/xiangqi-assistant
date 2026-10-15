@@ -11,6 +11,7 @@ from PyQt6.QtGui import (QColor, QFont, QPainter, QPainterPath, QPen, QBrush,
 from PyQt6.QtWidgets import QWidget
 
 from core.board import PIECE_NAMES, RED, BLACK, side_of
+from i18n import get_language, tr, ui_font_family
 
 Pt = Tuple[int, int]
 
@@ -164,10 +165,15 @@ class BoardWidget(QWidget):
 
         cx, cy = self.width() / 2, self.height() * 0.42
         text = fx["text"]
-        font = QFont("Microsoft YaHei", max(10, int(cell * 1.5 * scale)))
+        font = QFont(ui_font_family(), max(10, int(cell * 1.5 * scale)))
         font.setBold(True)
         painter.setFont(font)
         tw = painter.fontMetrics().horizontalAdvance(text)
+        max_w = self.width() * 0.9
+        if tw > max_w:                  # 译文比两个汉字宽得多：等比缩小到放得下
+            font.setPointSizeF(max(8.0, font.pointSizeF() * max_w / tw))
+            painter.setFont(font)
+            tw = painter.fontMetrics().horizontalAdvance(text)
         # 阴影 + 主体
         painter.setPen(QPen(QColor(0, 0, 0, int(alpha * 0.65))))
         off = max(1.5, cell * 0.05)
@@ -176,10 +182,14 @@ class BoardWidget(QWidget):
                                    fx["color"].blue(), alpha)))
         painter.drawText(QPointF(cx - tw / 2, cy), text)
         if fx["sub"]:
-            sub_font = QFont("Microsoft YaHei", max(9, int(cell * 0.42)))
+            sub_font = QFont(ui_font_family(), max(9, int(cell * 0.42)))
             painter.setFont(sub_font)
             painter.setPen(QPen(QColor(235, 235, 235, alpha)))
             w = painter.fontMetrics().horizontalAdvance(fx["sub"])
+            if w > max_w:
+                sub_font.setPointSizeF(max(7.0, sub_font.pointSizeF() * max_w / w))
+                painter.setFont(sub_font)
+                w = painter.fontMetrics().horizontalAdvance(fx["sub"])
             painter.drawText(QPointF(cx - w / 2, cy + cell * 0.75), fx["sub"])
 
     # ---------------------------------------------------------------- 数据
@@ -283,14 +293,16 @@ class BoardWidget(QWidget):
         pen.setWidthF(1.6)
         painter.setPen(pen)
 
-        # 楚河 汉界
-        font = QFont("Microsoft YaHei", int(cell * 0.32))
+        # 楚河 汉界（按半边棋盘居中，译文长短不一）
+        font = QFont(ui_font_family(), int(cell * 0.32))
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QPen(LINE_COLOR))
         mid_y = (self.cell_to_view(4, 0).y() + self.cell_to_view(5, 0).y()) / 2
-        painter.drawText(QPointF(x0 + cell * 1.2, mid_y + cell * 0.15), "楚  河")
-        painter.drawText(QPointF(x0 + cell * 5.6, mid_y + cell * 0.15), "汉  界")
+        river = QRectF(x0, mid_y - cell * 0.4, cell * 4, cell * 0.8)
+        painter.drawText(river, Qt.AlignmentFlag.AlignCenter, tr("楚  河"))
+        painter.drawText(river.translated(cell * 4, 0),
+                         Qt.AlignmentFlag.AlignCenter, tr("汉  界"))
 
         # 兵/炮位标记
         self._draw_position_marks(painter, cell, x0, y0)
@@ -375,11 +387,15 @@ class BoardWidget(QWidget):
 
     def _draw_coordinates(self, painter, cell, x0, y0):
         """棋盘上下两侧的纵线坐标：红方一侧中文数字（一~九，自红方右起），
-        黑方一侧阿拉伯数字（1~9，自黑方右起）。视角翻转时随之交换。"""
-        red_nums = ["九", "八", "七", "六", "五", "四", "三", "二", "一"]
+        黑方一侧阿拉伯数字（1~9，自黑方右起）。视角翻转时随之交换。
+        越南记谱双方都用阿拉伯数字，红方一侧随之改为 9~1。"""
+        if get_language() == "zh":
+            red_nums = ["九", "八", "七", "六", "五", "四", "三", "二", "一"]
+        else:
+            red_nums = [str(9 - c) for c in range(9)]
         flip = self.flipped()
         red_bottom = not flip
-        font = QFont("Microsoft YaHei", max(8, int(cell * 0.22)))
+        font = QFont(ui_font_family(), max(8, int(cell * 0.22)))
         painter.setFont(font)
         for c in range(9):
             vx = x0 + ((8 - c) if flip else c) * cell
@@ -488,7 +504,7 @@ class BoardWidget(QWidget):
                 self.drag_pos = pos
             else:
                 self.selected = None
-                self.status_message.emit("非法着法")
+                self.status_message.emit(tr("非法着法"))
             self.update()
             return
         piece = self.game.board.piece_at(*sq)
@@ -529,5 +545,5 @@ class BoardWidget(QWidget):
             self.move_attempted.emit(move)
         else:
             self.selected = frm
-            self.status_message.emit("非法着法")
+            self.status_message.emit(tr("非法着法"))
         self.update()

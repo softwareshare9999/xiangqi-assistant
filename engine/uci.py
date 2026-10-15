@@ -22,6 +22,8 @@ import sys
 import threading
 from typing import Callable, Dict, List, Optional
 
+from i18n import tr
+
 
 def find_engine_exe() -> Optional[str]:
     """在 engine/bin 下查找 Pikafish 可执行文件。"""
@@ -93,7 +95,7 @@ class UciEngine:
         self._send("uci")
         if not self._wait_for("uciok", timeout=15):
             self.stop()
-            raise RuntimeError("引擎未响应 uciok，可能不是 UCI 引擎")
+            raise RuntimeError(tr("引擎未响应 uciok，可能不是 UCI 引擎"))
 
     def stop(self) -> None:
         """终止引擎进程。"""

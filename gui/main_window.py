@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QMainWindow, QMessageBox, QPushButton, QRadioButton,
                              QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
-from core.board import Board, Move, RED, BLACK, move_to_iccs, iccs_to_move, move_to_chinese
+from core.board import (Board, Move, RED, BLACK, move_to_iccs, iccs_to_move,
+                        move_to_text, piece_display_name)
 from core.game import Game
 from engine.uci import UciEngine, find_engine_exe, find_nnue_file, parse_info_line
 from gui.board_widget import BoardWidget
@@ -27,11 +28,15 @@ from gui.import_dialog import ImportDialog
 from gui.setup_dialog import SetupDialog
 from gui.sound import SoundManager
 from gui.takeover_dialog import TakeoverDialog
+from i18n import DEFAULT_LANGUAGE, LANGUAGES, get_language, tr
 from live import LiveObserver
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".xq_assistant.json")
 
+TAKEOVER_BUTTON_TEXT = "🎯 一键接管对局（自动找窗口·自动识别·自动走子）"
+
 DEFAULT_CONFIG = {
+    "language": DEFAULT_LANGUAGE,  # 界面语言：vi 越南文 / zh 中文（重启生效）
     "threads": max(1, (os.cpu_count() or 4) - 1),
     "hash_mb": 1024,
     "multipv": 3,
@@ -47,6 +52,23 @@ DEFAULT_CONFIG = {
     "sound": True,            # 音效（抬子/落子/吃子/将军/绝杀锣声）
     "voice": True,            # 绝杀/困毙时语音播报
 }
+
+
+def read_config() -> dict:
+    """读取配置（缺项取默认值）。"""
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg.update(json.load(f))
+    except Exception:
+        pass
+    return cfg
+
+
+def model_label(filename: str) -> str:
+    """检测模型的显示名（文件名是中文，界面按当前语言显示）。"""
+    stem = filename[:-5] if filename.endswith(".onnx") else filename
+    return tr(stem)
 
 
 def available_models() -> list:
@@ -76,7 +98,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("象棋接管助手 · Pikafish")
+        self.setWindowTitle(tr("象棋接管助手 · Pikafish"))
         self.resize(1280, 820)
         self.setAcceptDrops(True)     # 支持把截图直接拖进窗口
 
@@ -111,13 +133,7 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- 配置
     def _load_config(self) -> dict:
-        cfg = dict(DEFAULT_CONFIG)
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg.update(json.load(f))
-        except Exception:
-            pass
-        return cfg
+        return read_config()
 
     def _save_config(self) -> None:
         try:
@@ -150,26 +166,26 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.panel, 1)
 
         controls = QHBoxLayout()
-        self.btn_import = QPushButton("导入截图 (Ctrl+V)")
-        self.btn_setup = QPushButton("手动摆局")
-        self.btn_new = QPushButton("新开局")
-        self.btn_undo = QPushButton("悔棋")
-        self.btn_flip = QPushButton("翻转视角")
+        self.btn_import = QPushButton(tr("导入截图 (Ctrl+V)"))
+        self.btn_setup = QPushButton(tr("手动摆局"))
+        self.btn_new = QPushButton(tr("新开局"))
+        self.btn_undo = QPushButton(tr("悔棋"))
+        self.btn_flip = QPushButton(tr("翻转视角"))
         for b in (self.btn_import, self.btn_setup, self.btn_new,
                   self.btn_undo, self.btn_flip):
             controls.addWidget(b)
         right_layout.addLayout(controls)
 
         controls2 = QHBoxLayout()
-        self.chk_analyze = QCheckBox("持续引擎分析")
+        self.chk_analyze = QCheckBox(tr("持续引擎分析"))
         self.chk_analyze.setChecked(True)
-        self.btn_settings = QPushButton("引擎设置...")
+        self.btn_settings = QPushButton(tr("引擎设置..."))
         controls2.addWidget(self.chk_analyze)
         controls2.addWidget(self.btn_settings)
         right_layout.addLayout(controls2)
 
         # 一键接管
-        self.btn_takeover = QPushButton("🎯 一键接管对局（自动找窗口·自动识别·自动走子）")
+        self.btn_takeover = QPushButton(tr(TAKEOVER_BUTTON_TEXT))
         self.btn_takeover.setMinimumHeight(38)
         f_big = self.btn_takeover.font()
         f_big.setBold(True)
@@ -182,23 +198,22 @@ class MainWindow(QMainWindow):
 
         # 开局走法（接管时生效；每局都按此开局行棋）
         open_row = QHBoxLayout()
-        open_row.addWidget(QLabel("开局走法:"))
+        open_row.addWidget(QLabel(tr("开局走法:")))
         self.combo_opening = QComboBox()
-        from core.openings import OPENINGS
-        for name, tip, _moves in OPENINGS:
-            label = name if not tip else f"{name}（{tip}）"
-            self.combo_opening.addItem(label or "默认（引擎选最优）", name)
+        from core.openings import opening_label, opening_names
+        for name in opening_names():
+            self.combo_opening.addItem(opening_label(name), name)
         idx0 = self.combo_opening.findData(self.config.get("opening", ""))
         self.combo_opening.setCurrentIndex(idx0 if idx0 >= 0 else 0)
         self.combo_opening.setToolTip(
-            "接管期间：轮到我方时优先走该开局的着法，走完（或不可行）后\n"
-            "恢复引擎选最优。执黑时自动镜像。每局重新应用，"
-            "直至停止接管。")
+            tr("接管期间：轮到我方时优先走该开局的着法，走完（或不可行）后\n"
+               "恢复引擎选最优。执黑时自动镜像。每局重新应用，"
+               "直至停止接管。"))
         open_row.addWidget(self.combo_opening, 1)
         right_layout.addLayout(open_row)
 
         # 对局窗口同步（高级）
-        sync_title = QLabel("对局窗口同步（高级·手动选择窗口）")
+        sync_title = QLabel(tr("对局窗口同步（高级·手动选择窗口）"))
         font3 = QFont()
         font3.setBold(True)
         sync_title.setFont(font3)
@@ -210,39 +225,39 @@ class MainWindow(QMainWindow):
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_window.setMinimumContentsLength(12)
         sync_row.addWidget(self.combo_window, 1)
-        self.btn_win_refresh = QPushButton("刷新")
+        self.btn_win_refresh = QPushButton(tr("刷新"))
         sync_row.addWidget(self.btn_win_refresh)
         right_layout.addLayout(sync_row)
 
         sync_row2 = QHBoxLayout()
-        self.btn_sync = QPushButton("开始观察")
-        self.btn_resync = QPushButton("重新同步")
+        self.btn_sync = QPushButton(tr("开始观察"))
+        self.btn_resync = QPushButton(tr("重新同步"))
         self.btn_resync.setEnabled(False)
         sync_row2.addWidget(self.btn_sync)
         sync_row2.addWidget(self.btn_resync)
         right_layout.addLayout(sync_row2)
 
-        self.chk_continue = QCheckBox("自动续局（一局结束后自动点叉→再来一局）")
+        self.chk_continue = QCheckBox(tr("自动续局（一局结束后自动点叉→再来一局）"))
         self.chk_continue.setToolTip(
-            "对局结束后自动关闭结算弹窗并点「再来一局」，识别新开局后\n"
-            "按“你的棋子在下方”自动判定阵营：你执红则先走，你执黑则等对方。")
+            tr("对局结束后自动关闭结算弹窗并点「再来一局」，识别新开局后\n"
+               "按“你的棋子在下方”自动判定阵营：你执红则先走，你执黑则等对方。"))
         self.chk_continue.setChecked(self.config.get("auto_continue", True))
         right_layout.addWidget(self.chk_continue)
 
-        self.chk_auto = QCheckBox("自动代点（轮到我方时直接在对局窗口落子）")
+        self.chk_auto = QCheckBox(tr("自动代点（轮到我方时直接在对局窗口落子）"))
         self.chk_auto.setToolTip(
-            "需先开始观察。引擎算出着法后自动在对局窗口点击落子；"
-            "落子是否成功以窗口画面回读为准，未确认会提醒。")
+            tr("需先开始观察。引擎算出着法后自动在对局窗口点击落子；"
+               "落子是否成功以窗口画面回读为准，未确认会提醒。"))
         right_layout.addWidget(self.chk_auto)
 
-        self.lbl_sync = QLabel("未连接。先设置好局面，再选择对局窗口开始观察。")
+        self.lbl_sync = QLabel(tr("未连接。先设置好局面，再选择对局窗口开始观察。"))
         self.lbl_sync.setWordWrap(True)
         right_layout.addWidget(self.lbl_sync)
 
         # 人机对战区
         battle_box = QHBoxLayout()
-        self.rb_mode_play = QRadioButton("人机对战")
-        self.rb_mode_assist = QRadioButton("接管分析")
+        self.rb_mode_play = QRadioButton(tr("人机对战"))
+        self.rb_mode_assist = QRadioButton(tr("接管分析"))
         self.rb_mode_assist.setChecked(True)
         battle_box.addWidget(self.rb_mode_play)
         battle_box.addWidget(self.rb_mode_assist)
@@ -250,12 +265,12 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(battle_box)
 
         battle_box2 = QHBoxLayout()
-        battle_box2.addWidget(QLabel("我方执:"))
+        battle_box2.addWidget(QLabel(tr("我方执:")))
         self.side_combo = QComboBox()
-        self.side_combo.addItem("红方", "w")
-        self.side_combo.addItem("黑方", "b")
+        self.side_combo.addItem(tr("红方"), "w")
+        self.side_combo.addItem(tr("黑方"), "b")
         battle_box2.addWidget(self.side_combo)
-        self.btn_battle = QPushButton("开始对战")
+        self.btn_battle = QPushButton(tr("开始对战"))
         self.btn_battle.setEnabled(False)
         battle_box2.addWidget(self.btn_battle)
         right_layout.addLayout(battle_box2)
@@ -270,12 +285,12 @@ class MainWindow(QMainWindow):
         self._import_sc.activated.connect(self._open_import)
 
         # 菜单
-        menu = self.menuBar().addMenu("文件(&F)")
-        act_import = QAction("导入截图...", self)
+        menu = self.menuBar().addMenu(tr("文件(&F)"))
+        act_import = QAction(tr("导入截图..."), self)
         act_import.setShortcut(QKeySequence("Ctrl+I"))
         act_import.triggered.connect(self._open_import)
         menu.addAction(act_import)
-        act_quit = QAction("退出", self)
+        act_quit = QAction(tr("退出"), self)
         act_quit.triggered.connect(self.close)
         menu.addAction(act_quit)
 
@@ -337,15 +352,15 @@ class MainWindow(QMainWindow):
         self._sync_timer.setInterval(700)
         self._sync_timer.timeout.connect(self._sync_tick)
 
-        self.statusBar().showMessage("就绪。点击「导入截图」开始半途接管。")
+        self.statusBar().showMessage(tr("就绪。点击「导入截图」开始半途接管。"))
 
     # ---------------------------------------------------------------- 引擎
     def _start_engine(self):
         exe = find_engine_exe()
         if exe is None:
-            self.panel.set_engine_name("未找到 Pikafish（可用纯分析模式）")
+            self.panel.set_engine_name(tr("未找到 Pikafish（可用纯分析模式）"))
             self.statusBar().showMessage(
-                "未找到引擎：请运行 tools/download_engine.py 下载 Pikafish。识别与记录功能不受影响。")
+                tr("未找到引擎：请运行 tools/download_engine.py 下载 Pikafish。识别与记录功能不受影响。"))
             return
         try:
             self.engine = UciEngine(exe, find_nnue_file())
@@ -358,10 +373,10 @@ class MainWindow(QMainWindow):
                 multipv=self.config["multipv"])
             self.engine.new_game()
             self.panel.set_engine_name(self.engine.engine_id or "Pikafish")
-            self.statusBar().showMessage(f"引擎已启动: {self.engine.engine_id}")
+            self.statusBar().showMessage(tr("引擎已启动: {name}", name=self.engine.engine_id))
         except Exception as e:
             self.engine = None
-            QMessageBox.warning(self, "引擎", f"引擎启动失败: {e}")
+            QMessageBox.warning(self, tr("引擎"), tr("引擎启动失败: {e}", e=e))
 
     def _engine_info_cb(self, info: dict) -> None:
         """引擎线程回调。做最少的工作，其余投递到 GUI 线程。"""
@@ -418,11 +433,15 @@ class MainWindow(QMainWindow):
         if self.panel.pv_lines:
             score_str = self.panel.pv_lines[0].get("score_str", "")
         depth = self.panel.pv_lines[0].get("depth") if self.panel.pv_lines else None
-        extra = f"（{score_str}" + (f", 深度 {depth}" if depth else "") + "）" \
-            if score_str else ""
+        if not score_str:
+            extra = ""
+        elif depth:
+            extra = tr("（{score}, 深度 {depth}）", score=score_str, depth=depth)
+        else:
+            extra = tr("（{score}）", score=score_str)
         self.statusBar().showMessage(
-            f"建议着法: {move_to_chinese(self.game.board, mv)}{extra}"
-            f" — 请在 JJ 象棋上照此走子")
+            tr("建议着法: {move}{extra} — 请在 JJ 象棋上照此走子",
+               move=move_to_text(self.game.board, mv), extra=extra))
 
     def _engine_bestmove_cb(self, move) -> None:
         # 引擎线程回调 -> 切换到 GUI 线程处理
@@ -471,7 +490,7 @@ class MainWindow(QMainWindow):
                 self._trigger_opening_click(mv, cn)
                 return
         stm = self.game.side_to_move
-        cn = move_to_chinese(self.game.board, mv)
+        cn = move_to_text(self.game.board, mv)
         score_str = ""
         if self.panel.pv_lines:
             top = self.panel.pv_lines[0]
@@ -491,7 +510,7 @@ class MainWindow(QMainWindow):
                 pv = self.panel.pv_lines[0].get("pv") or []
                 if len(pv) >= 2 and pv[0] == move_to_iccs(mv):
                     self._expected_reply = pv[1]
-            cn = move_to_chinese(self.game.board, mv)
+            cn = move_to_text(self.game.board, mv)
             self._auto_click_move(mv, cn, score_str)
             return
         if self.playing and stm == self.engine_color:
@@ -499,14 +518,17 @@ class MainWindow(QMainWindow):
             self._auto_timer_fen = self.game.board.to_fen()
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(120, lambda: self._engine_auto_move(mv, self._auto_timer_fen))
-            self.statusBar().showMessage(f"引擎走了: {cn}（{score_str}）")
+            self.statusBar().showMessage(
+                tr("引擎走了: {move}（{score}）", move=cn, score=score_str))
         elif self.board.my_color is not None and stm == self.board.my_color:
             self.board.set_best_move(mv)
             self.statusBar().showMessage(
-                f"建议着法: {cn}（{score_str}）— 请在 JJ 象棋上照此走子")
+                tr("建议着法: {move}（{score}）— 请在 JJ 象棋上照此走子",
+                   move=cn, score=score_str))
         else:
             self.board.set_best_move(mv)
-            self.statusBar().showMessage(f"对方最佳预测: {cn}（{score_str}）")
+            self.statusBar().showMessage(
+                tr("对方最佳预测: {move}（{score}）", move=cn, score=score_str))
 
     # ---------------------------------------------------------------- 自动代点
     def _cell_screen_pos(self, fen_r: int, fen_c: int):
@@ -644,7 +666,7 @@ class MainWindow(QMainWindow):
             self._search_root_fen = self._search_fen
             self._last_pv_top = None
             self._sync_log(f"预计算命中 {exp}：引擎已提前算好，立即取应着")
-            self._sync_status("预计算命中 ✓ 立即出着")
+            self._sync_status(tr("预计算命中 ✓ 立即出着"))
             try:
                 self.engine.ponderhit()
             except Exception:
@@ -726,13 +748,13 @@ class MainWindow(QMainWindow):
             if cand in repeats or not b.is_legal_move(cand):
                 continue
             try:
-                cn = move_to_chinese(b, cand)
+                cn = move_to_text(b, cand)
             except Exception:
                 cn = move_to_iccs(cand)
             self._sync_log(f"⚠ 检测到{kind}循环——放弃 {move_to_iccs(mv)}，"
                            f"改用候选 {move_to_iccs(cand)}（{cn}）脱出"
                            f"（评分 {line.get('score_str', '')}）")
-            self._sync_status(f"⚠ 检测到{kind}，已更换着法避免判负 ✓",
+            self._sync_status(tr("⚠ 检测到{kind}，已更换着法避免判负 ✓", kind=tr(kind)),
                               sticky=True)
             return cand, line.get("score_str", "") or score_str
         # ② 候选也全是重复着法：排除重复着法后重新搜索
@@ -750,17 +772,17 @@ class MainWindow(QMainWindow):
         if fresh:
             cand = fresh[0]
             try:
-                cn = move_to_chinese(b, cand)
+                cn = move_to_text(b, cand)
             except Exception:
                 cn = move_to_iccs(cand)
             self._sync_log(f"⚠ 检测到{kind}且搜索未给出脱出着法——"
                            f"直接改走 {move_to_iccs(cand)}（{cn}）")
-            self._sync_status(f"⚠ 检测到{kind}，已强制更换着法避免判负 ✓",
+            self._sync_status(tr("⚠ 检测到{kind}，已强制更换着法避免判负 ✓", kind=tr(kind)),
                               sticky=True)
             return cand, score_str
         # ④ 无路可逃（极端局面）：照走并提醒人工
         self._sync_log(f"⚠ 检测到{kind}循环，但已无脱出着法")
-        self._sync_status(f"⚠ 已陷入{kind}且无脱出着法，请手动走子！",
+        self._sync_status(tr("⚠ 已陷入{kind}且无脱出着法，请手动走子！", kind=tr(kind)),
                           sticky=True)
         return mv, score_str
 
@@ -795,7 +817,8 @@ class MainWindow(QMainWindow):
             self._clicked_fen = key[0]
         self._sync_log(f"代点开始：{cn}（{score_str}）局面={self.game.board.to_fen()}")
         self._last_mover_side = self.board.my_color or self.game.side_to_move
-        self._sync_status(f"自动代点：{cn}（{score_str}）— 正在落子，等待画面确认…")
+        self._sync_status(tr("自动代点：{move}（{score}）— 正在落子，等待画面确认…",
+                             move=cn, score=score_str))
         threading.Thread(target=self._click_worker, args=(mv,), daemon=True).start()
 
     def _click_worker(self, mv: Move):
@@ -817,7 +840,7 @@ class MainWindow(QMainWindow):
                 pos = self._cell_screen_pos(*cell)
                 if pos is None:
                     self._sync_log("代点放弃：坐标换算失败（无棋盘框或窗口不可用）")
-                    self._sync_status("⚠ 代点失败：对局窗口不可用。", sticky=True)
+                    self._sync_status(tr("⚠ 代点失败：对局窗口不可用。"), sticky=True)
                     # 清掉待确认代点：留着会让看门狗以为"有动作在跑"
                     # 而永不救援（实际发生过重启接管后静默不走棋）
                     self._auto_click_pending = None
@@ -834,8 +857,8 @@ class MainWindow(QMainWindow):
                         self._sync_log(f"落点 ({pos[0]},{pos[1]}) 被其它窗口遮挡"
                                        f"（root={root}），放弃本次落子")
                         self._sync_status(
-                            "⚠ 落子位置被其它窗口遮挡，已放弃本次落子。"
-                            "请把对局窗口移到无遮挡的位置后重试。", sticky=True)
+                            tr("⚠ 落子位置被其它窗口遮挡，已放弃本次落子。"
+                               "请把对局窗口移到无遮挡的位置后重试。"), sticky=True)
                         self._auto_click_pending = None
                         return
                 capture_win.click_at(*pos)
@@ -848,10 +871,10 @@ class MainWindow(QMainWindow):
     def _trigger_opening_click(self, mv, cn: str):
         """把开局着法走上去（接管模式同样走代点通道）。"""
         if (self.chk_auto.isChecked() or self._takeover) and self._sync_hwnd:
-            self._auto_click_move(mv, cn, "开局")
+            self._auto_click_move(mv, cn, tr("开局"))
         else:
             self.board.set_best_move(mv)
-            self.statusBar().showMessage(f"开局走法：{cn}")
+            self.statusBar().showMessage(tr("开局走法：{move}", move=cn))
 
     # ---------------------------------------------------------------- 开局走法
     def _on_opening_changed(self, _idx: int):
@@ -886,9 +909,9 @@ class MainWindow(QMainWindow):
         self._opening_queue = opening_moves(name, side) if (name and side) else []
         self._opening_idx = 0
         if self._opening_queue:
-            from core.board import iccs_to_move, move_to_chinese
+            from core.board import iccs_to_move, move_to_text
             try:
-                names = [move_to_chinese(self.game.board, iccs_to_move(m))
+                names = [move_to_text(self.game.board, iccs_to_move(m))
                          for m in self._opening_queue]
             except Exception:
                 names = list(self._opening_queue)
@@ -904,7 +927,7 @@ class MainWindow(QMainWindow):
         me = self.board.my_color
         if me is None or self.game.side_to_move != me:
             return None                       # 非我方回合：开局着法不能走
-        from core.board import iccs_to_move, move_to_chinese
+        from core.board import iccs_to_move, move_to_text
         while self._opening_idx < len(self._opening_queue):
             iccs = self._opening_queue[self._opening_idx]
             try:
@@ -914,7 +937,7 @@ class MainWindow(QMainWindow):
                 continue
             if self.game.board.is_legal_move(mv):
                 try:
-                    cn = move_to_chinese(self.game.board, mv)
+                    cn = move_to_text(self.game.board, mv)
                 except Exception:
                     cn = iccs
                 return (mv, cn)
@@ -979,7 +1002,7 @@ class MainWindow(QMainWindow):
                 self._again_clicked_at = time.time()
                 self._await_new_game = True
                 self._await_since = time.time()
-                self._sync_status("已点「再来一局」，等待新开局…")
+                self._sync_status(tr("已点「再来一局」，等待新开局…"))
                 return True
             return False
         # ② 模板没匹配到：按画面锚点（按钮锚定在界面底部，标定自真实截图）
@@ -997,7 +1020,7 @@ class MainWindow(QMainWindow):
                     self._again_clicked_at = time.time()
                     self._await_new_game = True
                     self._await_since = time.time()
-                    self._sync_status("已按坐标点「再来一局」，等待新开局…")
+                    self._sync_status(tr("已按坐标点「再来一局」，等待新开局…"))
                     return True
             return False
         # ③ 「再来一局」不可见（被弹窗遮挡）时尝试关弹窗。
@@ -1046,8 +1069,10 @@ class MainWindow(QMainWindow):
         side = "红方" if my_color == RED else "黑方"
         self._sync_log(f"新对局开始：推断我方执{side}，"
                        f"{'我方先走' if my_color == RED else '等对方先走'}")
-        self._sync_status(f"新对局 ✓ 我方执{side}，"
-                          + ("先走…" if my_color == RED else "等对方先走…"))
+        if my_color == RED:
+            self._sync_status(tr("新对局 ✓ 我方执{side}，先走…", side=tr(side)))
+        else:
+            self._sync_status(tr("新对局 ✓ 我方执{side}，等对方先走…", side=tr(side)))
         self._refresh_all()
 
     def _stall_watchdog(self):
@@ -1077,11 +1102,12 @@ class MainWindow(QMainWindow):
                 self._search_started_at = 0.0
                 if getattr(self, "_kill_logged", None) != cur_fen:
                     self._kill_logged = cur_fen
-                    reason = self.game.board.validate_position() or "未知（局面看似合法）"
+                    reason = self.game.board.validate_position() or tr("未知（局面看似合法）")
                     self._sync_log(f"引擎在该局面反复退出，暂停送分析：{reason}")
                     self._sync_status(
-                        f"⚠ 引擎无法分析当前局面（{reason}）。"
-                        f"请用「重新同步」或「手动摆局」修正局面。", sticky=True)
+                        tr("⚠ 引擎无法分析当前局面（{reason}）。"
+                           "请用「重新同步」或「手动摆局」修正局面。", reason=reason),
+                        sticky=True)
                 self.engine = None
                 self._start_engine()
                 return
@@ -1132,27 +1158,27 @@ class MainWindow(QMainWindow):
             if self._auto_click_retries < 1:
                 self._auto_click_retries += 1
                 try:
-                    cn = move_to_chinese(self.game.board, p["move"])
+                    cn = move_to_text(self.game.board, p["move"])
                 except Exception:
                     from core.board import move_to_iccs
                     cn = move_to_iccs(p["move"])
                 self._sync_log(f"代点 8 秒未确认，自动重试（第 "
                                f"{self._auto_click_retries} 次）：{cn}")
-                self._sync_status(f"落子未确认，自动重试：{cn}…")
+                self._sync_status(tr("落子未确认，自动重试：{move}…", move=cn))
                 self._clicked_key = None
                 self._auto_click_pending = None
                 self._auto_click_move(p["move"], cn, "")
                 return
             p["warned"] = True
             try:
-                cn = move_to_chinese(self.game.board, p["move"])
+                cn = move_to_text(self.game.board, p["move"])
             except Exception:
                 from core.board import move_to_iccs
                 cn = move_to_iccs(p["move"])
             self._sync_log(f"代点重试仍未确认：{cn}")
             self._sync_status(
-                f"⚠ 代点的着法（{cn}）重试后仍未确认。"
-                f"可能被弹窗/网络卡住，请手动检查 JJ。", sticky=True)
+                tr("⚠ 代点的着法（{move}）重试后仍未确认。"
+                   "可能被弹窗/网络卡住，请手动检查 JJ。", move=cn), sticky=True)
             # 放弃本次代点：pending 留着会把看门狗的"有动作在跑"判定
             # 永久喂住，卡死后无人救援（实际发生过静默不走棋）
             self._auto_click_pending = None
@@ -1183,39 +1209,40 @@ class MainWindow(QMainWindow):
 
     def _start_battle(self):
         if self.engine is None:
-            QMessageBox.warning(self, "人机对战", "引擎未启动，无法对战。")
+            QMessageBox.warning(self, tr("人机对战"), tr("引擎未启动，无法对战。"))
             return
         if self.game.result is not None:
             self.game.reset()
         if not self._position_is_sane():
-            QMessageBox.warning(self, "人机对战",
-                                "当前局面不合法："
-                                f"{getattr(self, '_position_problem', '未知')}。\n"
-                                "请用「手动摆局」改正后再开始对战。")
+            QMessageBox.warning(self, tr("人机对战"),
+                                tr("当前局面不合法：{problem}。\n"
+                                   "请用「手动摆局」改正后再开始对战。",
+                                   problem=getattr(self, "_position_problem", tr("未知"))))
             return
         my = self.side_combo.currentData()
         self.playing = True
         self.engine_color = "b" if my == "w" else "w"
         self.board.set_my_color(my)
         self.panel.set_my_color(my)
-        self.btn_battle.setText("结束对战")
+        self.btn_battle.setText(tr("结束对战"))
         self.side_combo.setEnabled(False)
-        side = "红方" if my == "w" else "黑方"
-        self.statusBar().showMessage(
-            f"对战开始：你执{side}。"
-            + ("请走子。" if self.game.side_to_move == my else "引擎先走..."))
+        side = tr("红方") if my == "w" else tr("黑方")
+        if self.game.side_to_move == my:
+            self.statusBar().showMessage(tr("对战开始：你执{side}。请走子。", side=side))
+        else:
+            self.statusBar().showMessage(tr("对战开始：你执{side}。引擎先走...", side=side))
         self._trigger_analysis()
 
     def _stop_battle(self):
         self.playing = False
         self.engine_color = None
-        self.btn_battle.setText("开始对战")
+        self.btn_battle.setText(tr("开始对战"))
         self.side_combo.setEnabled(True)
         try:
             self.engine.stop_search() if self.engine else None
         except Exception:
             pass
-        self.statusBar().showMessage("对战已结束。")
+        self.statusBar().showMessage(tr("对战已结束。"))
 
     def _translate_pv(self, pv) -> list:
         """把 ICCS 着法序列翻成中文记法。
@@ -1235,7 +1262,7 @@ class MainWindow(QMainWindow):
                 break
             if not probe.is_legal_move(mv):
                 break
-            out.append(move_to_chinese(probe, mv))
+            out.append(move_to_text(probe, mv))
             probe.make_move(mv)
         return out
 
@@ -1265,14 +1292,15 @@ class MainWindow(QMainWindow):
         if self.game.result is not None:
             return
         if not self._position_is_sane():
-            problem = getattr(self, "_position_problem", "未知")
+            problem = getattr(self, "_position_problem", tr("未知"))
             self.statusBar().showMessage(
-                f"局面不合法：{problem}。请用「手动摆局」或重新导入截图并校对。",
+                tr("局面不合法：{problem}。请用「手动摆局」或重新导入截图并校对。",
+                   problem=problem),
                 8000)
             self._sync_log(f"拒绝送引擎分析：局面不合法（{problem}）")
             return
         if not self.engine.is_running():
-            self.statusBar().showMessage("引擎进程异常退出，正在重启...", 5000)
+            self.statusBar().showMessage(tr("引擎进程异常退出，正在重启..."), 5000)
             try:
                 self.engine.stop()
             except Exception:
@@ -1335,14 +1363,14 @@ class MainWindow(QMainWindow):
         mover = self.game.side_to_move
         # 对战中：用户不能替引擎走子（引擎自己的着法 source='engine' 放行）
         if self.playing and source == "user" and mover == self.engine_color:
-            self.statusBar().showMessage("对战中不能移动引擎的棋子", 3000)
+            self.statusBar().showMessage(tr("对战中不能移动引擎的棋子"), 3000)
             return
         # 动画需要走子前的棋子，先记下来
         moving_piece = self.game.board.piece_at(*move[0])
         captured = self.game.board.piece_at(*move[1])
-        cn = move_to_chinese(self.game.board, move)
+        cn = move_to_text(self.game.board, move)
         if not self.game.play(move):
-            self.statusBar().showMessage(f"非法着法: {move_to_iccs(move)}", 3000)
+            self.statusBar().showMessage(tr("非法着法: {move}", move=move_to_iccs(move)), 3000)
             return
         self.board.animate_move(move, moving_piece)
         self.board.set_best_move(None)
@@ -1353,14 +1381,18 @@ class MainWindow(QMainWindow):
         # 把中文着法也写进状态栏，配合动画看清这一步
         cap_txt = ""
         if captured is not None:
-            from core.board import PIECE_NAMES
-            cap_txt = f"，吃{'红' if captured.isupper() else '黑'}{PIECE_NAMES[captured]}"
+            cap_txt = tr("，吃{side}{piece}",
+                         side=tr("红") if captured.isupper() else tr("黑"),
+                         piece=piece_display_name(captured))
+        mine = mover == (self.board.my_color or RED)
         if self.playing:
-            who = "你" if mover == (self.board.my_color or RED) else "引擎"
-            self.statusBar().showMessage(f"{who}走了：{cn}{cap_txt}")
+            who = tr("你") if mine else tr("引擎")
+            self.statusBar().showMessage(tr("{who}走了：{move}{capture}",
+                                            who=who, move=cn, capture=cap_txt))
         else:
-            who = "我方" if mover == (self.board.my_color or RED) else "对方"
-            self.statusBar().showMessage(f"{who}着法已记录：{cn}{cap_txt}")
+            who = tr("我方") if mine else tr("对方")
+            self.statusBar().showMessage(tr("{who}着法已记录：{move}{capture}",
+                                            who=who, move=cn, capture=cap_txt))
 
     def _after_move_effects(self, move: Move, captured, mover):
         """走子后的将军/绝杀音效与特效。"""
@@ -1376,12 +1408,10 @@ class MainWindow(QMainWindow):
             # 输家 = 现在轮到走子的一方（无子可走/被吃帅将）
             loser = board.side_to_move
             king = board.find_king(loser) or move[1]
-            if "将死" in result or "被吃" in result:
-                text, spoken = "绝杀", "绝杀"
-            else:
-                text, spoken = "困毙", "困毙"
+            # 被将死或帅被吃（无帅时 in_check 为真）-> 绝杀，否则困毙
+            spoken = "绝杀" if board.in_check(loser) else "困毙"
             self.board.start_effect(
-                text, QColor(220, 40, 40), king=king, dur_ms=3200, sub=result)
+                tr(spoken), QColor(220, 40, 40), king=king, dur_ms=3200, sub=result)
             self.sound.play("mate")
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(800, lambda: self.sound.speak(spoken))
@@ -1389,8 +1419,8 @@ class MainWindow(QMainWindow):
         # 未结束：若形成将军，给出提示音、语音与轻量特效
         if board.in_check(board.side_to_move):
             king = board.find_king(board.side_to_move)
-            who = "红方被将军" if board.side_to_move == RED else "黑方被将军"
-            self.board.start_effect("将军", QColor(240, 190, 40), king=king,
+            who = tr("红方被将军") if board.side_to_move == RED else tr("黑方被将军")
+            self.board.start_effect(tr("将军"), QColor(240, 190, 40), king=king,
                                     dur_ms=1100, sub=who, scale=0.55)
             self.sound.play("check")
             self.sound.speak("将军")
@@ -1404,18 +1434,19 @@ class MainWindow(QMainWindow):
             self.game.result = result
             if self.playing:
                 self._stop_battle()
-            self.statusBar().showMessage("对局结束: " + result)
+            self.statusBar().showMessage(tr("对局结束: {result}", result=result))
         elif self._analysis_enabled or self.playing or self._takeover:
             self._trigger_analysis()
 
     def _refresh_move_list(self):
         self.panel.move_list.clear()
-        moves = self.game.move_list_chinese()
+        moves = self.game.move_list_text()
+        red, black = tr("红"), tr("黑")
         for i in range(0, len(moves), 2):
             red_mv = moves[i]
             black_mv = moves[i + 1] if i + 1 < len(moves) else ""
             item = QListWidgetItem(
-                f"{i // 2 + 1}.  红 {red_mv:<10s} 黑 {black_mv}")
+                f"{i // 2 + 1}.  {red} {red_mv:<10s} {black} {black_mv}")
             self.panel.move_list.addItem(item)
         self.panel.move_list.scrollToBottom()
 
@@ -1426,7 +1457,7 @@ class MainWindow(QMainWindow):
         self.board.set_game(self.game)
         self.panel.clear_analysis()
         self._refresh_all()
-        self.statusBar().showMessage("新开局（初始局面）。可通过「导入截图」设置任意局面。")
+        self.statusBar().showMessage(tr("新开局（初始局面）。可通过「导入截图」设置任意局面。"))
 
     def _undo(self):
         if self.game.undo():
@@ -1436,7 +1467,7 @@ class MainWindow(QMainWindow):
             self.board.set_last_move(hist[-1][0] if hist else None)
             self.board.set_best_move(None)
             self._refresh_all()
-            self.statusBar().showMessage("已悔棋")
+            self.statusBar().showMessage(tr("已悔棋"))
 
     def _flip(self):
         self.board.view_flip = not getattr(self.board, "view_flip", False)
@@ -1458,7 +1489,7 @@ class MainWindow(QMainWindow):
         md = event.mimeData()
         if md.hasImage() or md.hasUrls():
             event.acceptProposedAction()
-            self.statusBar().showMessage("松开鼠标即可导入该截图")
+            self.statusBar().showMessage(tr("松开鼠标即可导入该截图"))
         else:
             event.ignore()
 
@@ -1470,7 +1501,7 @@ class MainWindow(QMainWindow):
         from gui.import_dialog import image_from_mime
         img = image_from_mime(event.mimeData())
         if img is None:
-            self.statusBar().showMessage("拖入的内容不是可识别的图片", 5000)
+            self.statusBar().showMessage(tr("拖入的内容不是可识别的图片"), 5000)
             event.ignore()
             return
         event.acceptProposedAction()
@@ -1485,8 +1516,8 @@ class MainWindow(QMainWindow):
             self._stop_sync()
         self._reset_session_state()
         self._takeover = True
-        self.btn_takeover.setText("⏹ 停止接管（再点一次）")
-        self.takeoverStatus.emit("正在自动寻找含棋盘的窗口…")
+        self.btn_takeover.setText(tr("⏹ 停止接管（再点一次）"))
+        self.takeoverStatus.emit(tr("正在自动寻找含棋盘的窗口…"))
         threading.Thread(target=self._probe_worker, daemon=True).start()
 
     def _reset_session_state(self):
@@ -1563,7 +1594,7 @@ class MainWindow(QMainWindow):
             all_wins = capture_win.list_windows()
         except Exception as e:
             log(f"枚举窗口失败: {e}")
-            self.takeoverStatus.emit(f"枚举窗口失败: {e}")
+            self.takeoverStatus.emit(tr("枚举窗口失败: {e}", e=e))
             return
         # 逐窗口记录 + 过滤（诊断：MuMu 为何没进候选一目了然）
         wins, rejected = [], []
@@ -1602,10 +1633,10 @@ class MainWindow(QMainWindow):
             minimized_n = sum(1 for r in rejected if "已最小化" in r)
             if minimized_n:
                 self.takeoverStatus.emit(
-                    f"检测到 {minimized_n} 个窗口处于最小化（如 MuMu 模拟器），"
-                    f"请先还原窗口再点「一键接管」。")
+                    tr("检测到 {n} 个窗口处于最小化（如 MuMu 模拟器），"
+                       "请先还原窗口再点「一键接管」。", n=minimized_n))
             else:
-                self.takeoverStatus.emit("没有可探测的窗口。请先打开 MuMu 并进入对局。")
+                self.takeoverStatus.emit(tr("没有可探测的窗口。请先打开 MuMu 并进入对局。"))
             return
         from recognition.pipeline import recognize_screenshot
         fail_reasons = []
@@ -1613,7 +1644,7 @@ class MainWindow(QMainWindow):
             for i, winfo in enumerate(wins):
                 title = winfo["title"][:30]
                 self.takeoverStatus.emit(
-                    f"探测窗口 {i + 1}/{len(wins)}：{title} …")
+                    tr("探测窗口 {i}/{n}：{title} …", i=i + 1, n=len(wins), title=title))
                 grids = []
                 attempts = []
                 # 最多取 3 帧：任意相邻两帧一致即认定稳定（避开动画）。
@@ -1691,8 +1722,9 @@ class MainWindow(QMainWindow):
                         accepted = True
                         break
                     log(f"窗口“{title}”未通过合理性校验: {reason}")
-                    self.takeoverStatus.emit(f"跳过窗口“{title}”：{reason}")
-                    fail_reasons.append(f"{title}：{reason}")
+                    self.takeoverStatus.emit(
+                        tr("跳过窗口“{title}”：{reason}", title=title, reason=reason))
+                    fail_reasons.append(tr("{title}：{reason}", title=title, reason=reason))
                     # 未通过校验的画面存档，便于事后诊断
                     try:
                         import cv2 as _cv
@@ -1716,17 +1748,18 @@ class MainWindow(QMainWindow):
                             "settling": True})
                         accepted = True
                 if not accepted and not grids:
-                    fail_reasons.append(f"{title}：画面识别失败")
+                    fail_reasons.append(tr("{title}：{reason}", title=title,
+                                           reason=tr("画面识别失败")))
                 if accepted:
                     return           # 已采纳并发出 takeoverFound，结束探测
             if fail_reasons:
                 self.takeoverStatus.emit(
-                    f"未找到含棋盘的窗口（{fail_reasons[-1]}）。"
-                    f"请确认棋盘完整可见、无弹窗遮挡后重试。")
+                    tr("未找到含棋盘的窗口（{reason}）。"
+                       "请确认棋盘完整可见、无弹窗遮挡后重试。", reason=fail_reasons[-1]))
             else:
                 self.takeoverStatus.emit(
-                    "未找到含棋盘的窗口。请确认已进入 JJ 对局界面"
-                    "（不是大厅），窗口未最小化，再重试。")
+                    tr("未找到含棋盘的窗口。请确认已进入 JJ 对局界面"
+                       "（不是大厅），窗口未最小化，再重试。"))
             log("探测结束：未找到含棋盘的窗口。原始窗口全量清单：")
             try:
                 for w in capture_win.list_all_toplevel_windows():
@@ -1782,11 +1815,11 @@ class MainWindow(QMainWindow):
             self.chk_auto.setChecked(True)
             self._takeover = True
             self._sync_timer.start()
-            self.btn_sync.setText("停止观察")
+            self.btn_sync.setText(tr("停止观察"))
             self.btn_resync.setEnabled(True)
             self._reset_opening()
             self._sync_log("接管进入结算界面模式：等待自动续局")
-            self._sync_status("检测到结算界面 ✓ 正在自动点「再来一局」开下一局…")
+            self._sync_status(tr("检测到结算界面 ✓ 正在自动点「再来一局」开下一局…"))
             return
         # 确认对话框：阵营按"你的棋子在下/上半屏"自动推断（可改），
         # 并让用户核对识别局面（核对过 = 干净皮肤模板，解决 車↔炮 类误差）
@@ -1795,8 +1828,8 @@ class MainWindow(QMainWindow):
                                  window_title=title, n_pieces=res.n_pieces)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             self._takeover = False
-            self.btn_takeover.setText("🎯 一键接管对局（自动找窗口·自动识别·自动走子）")
-            self._sync_status("已取消接管。")
+            self.btn_takeover.setText(tr(TAKEOVER_BUTTON_TEXT))
+            self._sync_status(tr("已取消接管。"))
             return
         my_color = dlg.my_color
         my_turn = dlg.my_turn_now
@@ -1806,8 +1839,8 @@ class MainWindow(QMainWindow):
         vdlg = _td.VerifyBoardDialog(self, grid=res.grid, my_color=my_color)
         if vdlg.exec() != QDialog.DialogCode.Accepted or not vdlg.confirmed_grid:
             self._takeover = False
-            self.btn_takeover.setText("🎯 一键接管对局（自动找窗口·自动识别·自动走子）")
-            self._sync_status("已取消接管。", sticky=True)
+            self.btn_takeover.setText(tr(TAKEOVER_BUTTON_TEXT))
+            self._sync_status(tr("已取消接管。"), sticky=True)
             return
         verified_grid = vdlg.confirmed_grid
         # 核对界面里用户可能整盘翻转了方向（红黑上下识别反了）：网格已由
@@ -1834,7 +1867,7 @@ class MainWindow(QMainWindow):
         try:
             self._sct = __import__("mss").mss()
         except Exception as e:
-            self._sync_status(f"初始化抓屏失败: {e}", sticky=True)
+            self._sync_status(tr("初始化抓屏失败: {e}", e=e), sticky=True)
             return
         # 采纳局面；轮到谁由用户选择决定
         stm = my_color if my_turn else ("b" if my_color == RED else RED)
@@ -1856,7 +1889,7 @@ class MainWindow(QMainWindow):
             _u32.SetForegroundWindow(_wt.HWND(hwnd))  # 拉到前台
         except Exception:
             pass
-        self.btn_sync.setText("停止观察")
+        self.btn_sync.setText(tr("停止观察"))
         self.btn_resync.setEnabled(True)
         self.combo_window.blockSignals(True)
         # 同步窗口下拉里定位到该窗口（展示用）
@@ -1868,11 +1901,11 @@ class MainWindow(QMainWindow):
         self._sync_timer.start()                     # 启动观察循环
         self._reset_opening()
         self._last_activity_ts = time.time()
-        side = "红方" if my_color == RED else "黑方"
+        side = tr("红方") if my_color == RED else tr("黑方")
         self._sync_status(
-            f"接管成功 ✓ 已锁定 {side}（窗口「{title[:24]}」已置顶）。"
-            + ("现在就轮到你，软件开始走子…"
-               if my_turn else "等待对手走子，走完自动接管节奏。"))
+            tr("接管成功 ✓ 已锁定 {side}（窗口「{title}」已置顶）。", side=side, title=title[:24])
+            + (tr("现在就轮到你，软件开始走子…")
+               if my_turn else tr("等待对手走子，走完自动接管节奏。")))
         self._refresh_all()
 
     def _stop_takeover_cleanup(self):
@@ -1884,7 +1917,7 @@ class MainWindow(QMainWindow):
                 pass
         self._takeover = False
         self._takeover_hwnd = None
-        self.btn_takeover.setText("🎯 一键接管对局（自动找窗口·自动识别·自动走子）")
+        self.btn_takeover.setText(tr(TAKEOVER_BUTTON_TEXT))
 
     # ---------------------------------------------------------------- 窗口同步
     def _refresh_windows(self):
@@ -1893,11 +1926,11 @@ class MainWindow(QMainWindow):
             import capture_win
             wins = capture_win.list_windows()
         except Exception as e:
-            self.lbl_sync.setText(f"枚举窗口失败: {e}")
+            self.lbl_sync.setText(tr("枚举窗口失败: {e}", e=e))
             return
         self.combo_window.clear()
         for winfo in wins:
-            tag = "（已最小化）" if winfo["minimized"] else ""
+            tag = tr("（已最小化）") if winfo["minimized"] else ""
             self.combo_window.addItem(f"{winfo['title'][:40]}{tag}",
                                       winfo["hwnd"])
 
@@ -1910,20 +1943,20 @@ class MainWindow(QMainWindow):
             self._refresh_windows()
             hwnd = self.combo_window.currentData()
         if not hwnd:
-            self.lbl_sync.setText("没有可选窗口。请先打开 MuMu/JJ 窗口再点「刷新」。")
+            self.lbl_sync.setText(tr("没有可选窗口。请先打开 MuMu/JJ 窗口再点「刷新」。"))
             return
         try:
             import mss
             self._sct = mss.mss()
         except Exception as e:
-            self.lbl_sync.setText(f"初始化抓屏失败: {e}")
+            self.lbl_sync.setText(tr("初始化抓屏失败: {e}", e=e))
             return
         self._sync_hwnd = hwnd
         self.observer.reset()
         self._sync_timer.start()
-        self.btn_sync.setText("停止观察")
+        self.btn_sync.setText(tr("停止观察"))
         self.btn_resync.setEnabled(True)
-        self.lbl_sync.setText("观察中：等待画面稳定以建立基准…")
+        self.lbl_sync.setText(tr("观察中：等待画面稳定以建立基准…"))
 
     def _stop_sync(self):
         self._sync_timer.stop()
@@ -1936,9 +1969,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._sct = None
-        self.btn_sync.setText("开始观察")
+        self.btn_sync.setText(tr("开始观察"))
         self.btn_resync.setEnabled(False)
-        self.lbl_sync.setText("已停止观察。")
+        self.lbl_sync.setText(tr("已停止观察。"))
 
     def _sync_log(self, text: str):
         """同步环节事件写日志（接管排查看这里）。"""
@@ -1964,7 +1997,7 @@ class MainWindow(QMainWindow):
         if rect is None:
             return None
         if capture_win.is_minimized(self._sync_hwnd):
-            self._sync_status("对局窗口已最小化，暂停同步（恢复窗口后自动继续）")
+            self._sync_status(tr("对局窗口已最小化，暂停同步（恢复窗口后自动继续）"))
             return None
         left, top, right, bottom = rect
         w, h = right - left, bottom - top
@@ -2006,15 +2039,15 @@ class MainWindow(QMainWindow):
             self._sync_log("对局窗口句柄已失效（窗口被关闭/重建）——"
                            "尝试自动重新锁定…")
             if not self._relocate_window_silent():
-                self._sync_status("⚠ 对局窗口已关闭。请重新打开 MuMu 并点「一键接管」。",
+                self._sync_status(tr("⚠ 对局窗口已关闭。请重新打开 MuMu 并点「一键接管」。"),
                                   sticky=True)
             return
         if mini:
             self._sync_log("对局窗口已最小化——自动恢复窗口")
             if capture_win.restore_window(self._sync_hwnd):
-                self._sync_status("对局窗口最小化，已自动恢复 ✓")
+                self._sync_status(tr("对局窗口最小化，已自动恢复 ✓"))
             else:
-                self._sync_status("⚠ 对局窗口已最小化，自动恢复失败，请手动还原。",
+                self._sync_status(tr("⚠ 对局窗口已最小化，自动恢复失败，请手动还原。"),
                                   sticky=True)
 
     def _no_board_heal(self, res, img) -> None:
@@ -2047,8 +2080,9 @@ class MainWindow(QMainWindow):
                            f"最小化={mini} 来源={res.source} 错误={res.error or '无'}")
             if elapsed > 30:
                 self._sync_status(
-                    f"识别不到棋盘已 {elapsed / 60:.1f} 分钟——正在持续重试；"
-                    f"如画面正常可点「重新同步」，或重开 JJ 对局后重新接管。",
+                    tr("识别不到棋盘已 {minutes:.1f} 分钟——正在持续重试；"
+                       "如画面正常可点「重新同步」，或重开 JJ 对局后重新接管。",
+                       minutes=elapsed / 60),
                     sticky=True)
 
     def _save_no_board_frame(self, res, img) -> None:
@@ -2106,7 +2140,7 @@ class MainWindow(QMainWindow):
             self._no_board_since = 0.0
             self._sync_log(f"自动重新锁定窗口 ✓「{w['title'][:24]}」（旧句柄 {old} "
                            f"→ 新句柄 {w['hwnd']}，{res.n_pieces} 子）")
-            self._sync_status("对局窗口句柄已变化，已自动重新锁定 ✓", sticky=True)
+            self._sync_status(tr("对局窗口句柄已变化，已自动重新锁定 ✓"), sticky=True)
             return True
         self._sync_log(f"自动重定位未找到可用的对局窗口（候选 {len(cands)} 个）")
         return False
@@ -2115,7 +2149,7 @@ class MainWindow(QMainWindow):
         try:
             self._sync_tick_inner()
         except Exception as e:
-            self._sync_status(f"同步出错（已继续）: {e}")
+            self._sync_status(tr("同步出错（已继续）: {e}", e=e))
 
     def _sync_tick_inner(self):
         self._check_auto_click_confirm()
@@ -2156,7 +2190,7 @@ class MainWindow(QMainWindow):
                 self._sync_state = "no_board"
                 self._sync_log(f"未识别到棋盘（弹窗/未进对局），暂停同步——"
                                f"来源 {res.source}，错误 {res.error or '无'}")
-            self._sync_status("未识别到棋盘（可能有弹窗/未进对局）。棋盘出现后自动恢复。")
+            self._sync_status(tr("未识别到棋盘（可能有弹窗/未进对局）。棋盘出现后自动恢复。"))
             self._no_board_heal(res, img)
             self.observer.feed(None, False)
             return
@@ -2175,7 +2209,7 @@ class MainWindow(QMainWindow):
                 return why_
             if (self._sync_last_npieces
                     and r.n_pieces <= self._sync_last_npieces - 4):
-                return "子数骤降"
+                return tr("子数骤降")
             return None
 
         reason = _frame_bad(res)
@@ -2203,7 +2237,8 @@ class MainWindow(QMainWindow):
             if self._dropped_frames >= 5:
                 if self._no_board_since == 0.0:
                     self._no_board_since = time.time()
-                self._sync_status(f"画面持续无法识别（{reason}）——已按棋盘不可用处理")
+                self._sync_status(tr("画面持续无法识别（{reason}）——已按棋盘不可用处理",
+                                     reason=reason))
                 if self._auto_continue_tick(img):
                     return
                 if self._dropped_frames % 30 == 1:
@@ -2265,14 +2300,17 @@ class MainWindow(QMainWindow):
             ok0, _r0 = grid_plausibility(res.grid)
             n0 = res.n_pieces
             if events and events[-1].get("type") != "baseline":
-                self._sync_status("对局结束，等待新开局（自动点「再来一局」）…")
+                self._sync_status(tr("对局结束，等待新开局（自动点「再来一局」）…"))
             return
         self._last_sync_res = res
         if events:
             self._last_activity_ts = time.time()
         if not events:
-            extra = f"，皮肤模板修正 {len(res.corrections)} 处" if res.corrections else ""
-            st = f"同步中（{res.n_pieces} 子{extra}）"
+            if res.corrections:
+                st = tr("同步中（{n} 子，皮肤模板修正 {fixed} 处）",
+                        n=res.n_pieces, fixed=len(res.corrections))
+            else:
+                st = tr("同步中（{n} 子）", n=res.n_pieces)
             if st != self._sync_state:
                 self._sync_state = st
                 self._sync_log(f"同步正常（{res.n_pieces} 子"
@@ -2284,18 +2322,18 @@ class MainWindow(QMainWindow):
             kind = ev["type"]
             if kind == "baseline":
                 self._sync_log("锁定对局基准")
-                self._sync_status("已锁定对局基准 ✓ 请确认左侧棋盘与 JJ 一致；"
-                                  "之后双方着法将自动同步。")
+                self._sync_status(tr("已锁定对局基准 ✓ 请确认左侧棋盘与 JJ 一致；"
+                                     "之后双方着法将自动同步。"))
             elif kind == "changed":
                 new_grid = ev["grid"]
                 same = all(new_grid[r][c] == self.game.board.grid[r][c]
                            for r in range(10) for c in range(9))
                 if same:
-                    self._sync_status("同步中（画面与棋盘一致）")
+                    self._sync_status(tr("同步中（画面与棋盘一致）"))
                     continue
                 # 转移约束推断：从合法走法中解释观察帧（容错同色异子误读）
                 from core.board import (infer_move_from_observation,
-                                        move_to_chinese, move_to_iccs)
+                                        move_to_text, move_to_iccs)
                 mv, score = infer_move_from_observation(self.game.board, new_grid)
                 if mv is None and self._auto_click_pending is not None:
                     # 我方代点与对手快速应着落进同一观察帧：两步假设
@@ -2371,8 +2409,8 @@ class MainWindow(QMainWindow):
                                                f"推断走法 {move_to_iccs(mv)}")
                                 # mv 已定，落到下方正常记录流程
                             else:
-                                self._sync_status("对方落子中（落点暂不合法，"
-                                                  "等待画面稳定）…")
+                                self._sync_status(tr("对方落子中（落点暂不合法，"
+                                                     "等待画面稳定）…"))
 
                         # A) 抬子思考：等待落子，不重同步、不采纳本帧。
                         # 只有"当前行棋方自己的棋子消失"才可能是抬子考虑；
@@ -2388,8 +2426,8 @@ class MainWindow(QMainWindow):
                                 self._sync_log(f"检测到 {who}方棋子被抬起"
                                                f"（{local_p} 于 ({r},{c})）"
                                                f"——等待落子")
-                            self._sync_status("对方思考中（棋子已抬起）"
-                                              "——落子后自动继续…")
+                            self._sync_status(tr("对方思考中（棋子已抬起）"
+                                                 "——落子后自动继续…"))
                             # 低阈值复核排除"检测漏检"（该格其实仍有子）
                             low = self._recognize_low_conf(img)
                             if low is not None:
@@ -2402,8 +2440,8 @@ class MainWindow(QMainWindow):
                             elif (now - self._lift_since > 60
                                   and not getattr(self, "_lift_warned", False)):
                                 self._lift_warned = True
-                                self._sync_status("⚠ 对方长时间未落子，"
-                                                  "请人工确认对局状态", sticky=True)
+                                self._sync_status(tr("⚠ 对方长时间未落子，"
+                                                     "请人工确认对局状态"), sticky=True)
                             continue
 
                         # C) 其它单格差异：持续 4 秒后复核/重同步（原有逻辑）
@@ -2431,7 +2469,7 @@ class MainWindow(QMainWindow):
                                                 f"（低阈值下该格仍有"
                                                 f"{low.grid[fr_c][fc_c]}）——保持本地棋盘")
                                             self._sync_status(
-                                                "该格复核为识别漏检，已保持棋盘不变 ✓")
+                                                tr("该格复核为识别漏检，已保持棋盘不变 ✓"))
                                             continue
                                         res = low      # 采纳更完整的低阈值结果
                                 mover = None
@@ -2446,8 +2484,8 @@ class MainWindow(QMainWindow):
                                                f"（走子方={'红' if mover == 'w' else '黑'}）")
                                 self._auto_resync_to_window(res, mover)
                             else:
-                                self._sync_status("检测到走子进行中/单格异常，等待稳定…"
-                                                  "（也支持你直接在 JJ 里手动走子）")
+                                self._sync_status(tr("检测到走子进行中/单格异常，等待稳定…"
+                                                     "（也支持你直接在 JJ 里手动走子）"))
                             continue
                     if mv is None:
                         # 多格无法解释时，同样优先从差异内容推走子方
@@ -2463,7 +2501,7 @@ class MainWindow(QMainWindow):
                         self._auto_resync_to_window(res, mover)
                         continue
                 try:
-                    cn = move_to_chinese(self.game.board, mv)
+                    cn = move_to_text(self.game.board, mv)
                 except Exception:
                     cn = move_to_iccs(mv)
                 mover_before = self.game.side_to_move
@@ -2503,7 +2541,7 @@ class MainWindow(QMainWindow):
                             self._sync_log("同步着法：对手应着（两步合帧解释）")
                         else:
                             self._auto_resync_to_window(res, None)
-                    self._sync_status(f"已自动同步着法：{cn}")
+                    self._sync_status(tr("已自动同步着法：{move}", move=cn))
                     # 落定后若轮到对手：让引擎预计算我方应着——代替原本
                     # 送给"对手局面"的无用分析（对手是人类，不会照它走）
                     if (self.board.my_color is not None
@@ -2517,7 +2555,7 @@ class MainWindow(QMainWindow):
             elif kind == "orientation_changed":
                 self._sync_log("画面方向变化")
                 self._sync_status(
-                    "⚠ 画面方向变化（红上↔红下）。请重新同步或重新导入。",
+                    tr("⚠ 画面方向变化（红上↔红下）。请重新同步或重新导入。"),
                     sticky=True)
 
     def _try_class_repair(self, diff, new_grid):
@@ -2579,12 +2617,12 @@ class MainWindow(QMainWindow):
         from recognition.yolo_board import grid_plausibility
         now = time.time()
         if now - self._last_auto_resync < 15:
-            self._sync_status("检测到局面不同步，正在自动校准…")
+            self._sync_status(tr("检测到局面不同步，正在自动校准…"))
             return
         ok, reason = grid_plausibility(res.grid)
         if not ok:
             self._sync_log(f"拒绝采纳残缺帧（{reason}）——等待完整帧")
-            self._sync_status("捕获画面不完整，等待下一帧自动校准…")
+            self._sync_status(tr("捕获画面不完整，等待下一帧自动校准…"))
             return
         self._last_auto_resync = now
         # 重同步后，此前记录的"抬子等待"状态已失效
@@ -2642,8 +2680,8 @@ class MainWindow(QMainWindow):
         self._partial_key = None
         self._sync_last_npieces = res.n_pieces
         self._refresh_all()
-        self._sync_status("检测到本地与 JJ 局面不一致，已自动以 JJ 为准重新同步 ✓"
-                          "（如反复出现请检查识别模型/皮肤模板）", sticky=True)
+        self._sync_status(tr("检测到本地与 JJ 局面不一致，已自动以 JJ 为准重新同步 ✓"
+                             "（如反复出现请检查识别模型/皮肤模板）"), sticky=True)
 
     def _resync_baseline(self):
         """以当前对局窗口画面强行重建同步基准。"""
@@ -2651,12 +2689,12 @@ class MainWindow(QMainWindow):
             return
         img = self._grab_window()
         if img is None:
-            self._sync_status("抓屏失败，无法重新同步。")
+            self._sync_status(tr("抓屏失败，无法重新同步。"))
             return
         from recognition.pipeline import recognize_screenshot
         res = recognize_screenshot(img, model_path=self._model_path())
         if res.source != "yolo" or res.n_pieces < 4:
-            self._sync_status("当前画面未识别到棋盘，无法重新同步。")
+            self._sync_status(tr("当前画面未识别到棋盘，无法重新同步。"))
             return
         self.observer.force_baseline(res.grid, res.red_at_top)
         self._drop_ponder()
@@ -2669,12 +2707,12 @@ class MainWindow(QMainWindow):
         same = all(res.grid[r][c] == self.game.board.grid[r][c]
                    for r in range(10) for c in range(9))
         if same:
-            self._sync_status("已重建同步基准 ✓ 棋盘与窗口一致，继续自动同步。")
+            self._sync_status(tr("已重建同步基准 ✓ 棋盘与窗口一致，继续自动同步。"))
         else:
             self._sync_status(
-                "已重建同步基准。⚠ 注意：窗口局面与左侧棋盘不一致，"
-                "请用「悔棋」/「手动摆局」或重新导入截图把棋盘对齐，"
-                "否则同步的着法可能不合法。")
+                tr("已重建同步基准。⚠ 注意：窗口局面与左侧棋盘不一致，"
+                   "请用「悔棋」/「手动摆局」或重新导入截图把棋盘对齐，"
+                   "否则同步的着法可能不合法。"))
 
     def _save_fail_frame(self, img, reason: str) -> None:
         """连续无法识别时存档画面，便于事后诊断（皮肤/遮挡问题）。"""
@@ -2744,10 +2782,10 @@ class MainWindow(QMainWindow):
             self.panel.set_my_color(dlg.my_color)
             self.panel.clear_analysis()
             self._refresh_all()
-            side = "红方" if dlg.my_color == RED else "黑方"
+            side = tr("红方") if dlg.my_color == RED else tr("黑方")
             self.statusBar().showMessage(
-                f"局面已摆好：我方执{side}。可直接「开始对战」，"
-                f"或继续摆子后再开始。")
+                tr("局面已摆好：我方执{side}。可直接「开始对战」，"
+                   "或继续摆子后再开始。", side=side))
 
     # ---------------------------------------------------------------- 导入
     def _open_import(self, preloaded=None):
@@ -2775,9 +2813,10 @@ class MainWindow(QMainWindow):
             self.panel.set_my_color(dlg.my_color)
             self.panel.clear_analysis()
             self._refresh_all()
-            side = "红方" if dlg.my_color == RED else "黑方"
+            side = tr("红方") if dlg.my_color == RED else tr("黑方")
             self.statusBar().showMessage(
-                f"已接管局面：我方执{side}。对方走子后请在棋盘上把对方棋子拖到目标位置。")
+                tr("已接管局面：我方执{side}。对方走子后请在棋盘上把对方棋子拖到目标位置。",
+                   side=side))
 
     # ---------------------------------------------------------------- 设置
     def _apply_human_mouse(self) -> None:
@@ -2794,8 +2833,15 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self):
         dlg = QDialog(self)
-        dlg.setWindowTitle("引擎设置")
+        dlg.setWindowTitle(tr("引擎设置"))
         form = QFormLayout(dlg)
+
+        combo_lang = QComboBox()
+        for code, name in LANGUAGES.items():
+            combo_lang.addItem(name, code)
+        i_l = combo_lang.findData(self.config.get("language", get_language()))
+        combo_lang.setCurrentIndex(i_l if i_l >= 0 else 0)
+        form.addRow(tr("界面语言"), combo_lang)
 
         sp_threads = QSpinBox()
         sp_threads.setRange(1, 256)
@@ -2817,9 +2863,9 @@ class MainWindow(QMainWindow):
         sp_movetime.setSuffix(" ms")
         models = available_models()
         self.combo_model = QComboBox()
-        self.combo_model.addItem("自动（优先中模型）", "")
+        self.combo_model.addItem(tr("自动（优先中模型）"), "")
         for m in models:
-            self.combo_model.addItem(m, m)
+            self.combo_model.addItem(model_label(m), m)
         idx = self.combo_model.findData(self.config.get("model_name", ""))
         if idx >= 0:
             self.combo_model.setCurrentIndex(idx)
@@ -2831,45 +2877,45 @@ class MainWindow(QMainWindow):
         sp_battle.setSingleStep(500)
         sp_battle.setValue(self.config.get("battle_movetime_ms", 3000))
         sp_battle.setSuffix(" ms")
-        note = QLabel("分析模式：每步用时 > 0 时按固定时间思考，否则按下面的深度上限。\n"
-                      "对战模式：每步用时上限（深度仍封顶于「深度」值，时间先到即停）。\n"
-                      "两者都是「时间 + 深度」双限制，时间到即出招，不会降低棋力上限。\n"
-                      "线程/置换表修改后需重启软件生效。")
+        note = QLabel(tr("分析模式：每步用时 > 0 时按固定时间思考，否则按下面的深度上限。\n"
+                         "对战模式：每步用时上限（深度仍封顶于「深度」值，时间先到即停）。\n"
+                         "两者都是「时间 + 深度」双限制，时间到即出招，不会降低棋力上限。\n"
+                         "线程/置换表修改后需重启软件生效。"))
         note.setWordWrap(True)
 
-        form.addRow("思考线程数", sp_threads)
-        form.addRow("置换表大小", sp_hash)
-        form.addRow("候选着法数 MultiPV", sp_multipv)
-        form.addRow("深度上限", sp_depth)
-        form.addRow("分析模式每步用时", sp_movetime)
-        form.addRow("对战模式每步用时", sp_battle)
-        form.addRow("截图识别模型", self.combo_model)
+        form.addRow(tr("思考线程数"), sp_threads)
+        form.addRow(tr("置换表大小"), sp_hash)
+        form.addRow(tr("候选着法数 MultiPV"), sp_multipv)
+        form.addRow(tr("深度上限"), sp_depth)
+        form.addRow(tr("分析模式每步用时"), sp_movetime)
+        form.addRow(tr("对战模式每步用时"), sp_battle)
+        form.addRow(tr("截图识别模型"), self.combo_model)
 
-        self.chk_human = QCheckBox("拟人化鼠标（按真人轨迹移动，含加速/微抖/悬停）")
+        self.chk_human = QCheckBox(tr("拟人化鼠标（按真人轨迹移动，含加速/微抖/悬停）"))
         self.chk_human.setChecked(self.config.get("human_mouse", True))
         self.combo_path = QComboBox()
-        self.combo_path.addItem("最小急动度（平滑，推荐）", "jerk")
-        self.combo_path.addItem("物理模拟 WindMouse（弧线更明显）", "wind")
+        self.combo_path.addItem(tr("最小急动度（平滑，推荐）"), "jerk")
+        self.combo_path.addItem(tr("物理模拟 WindMouse（弧线更明显）"), "wind")
         i_p = self.combo_path.findData(self.config.get("human_path", "jerk"))
         self.combo_path.setCurrentIndex(i_p if i_p >= 0 else 0)
         self.combo_speed = QComboBox()
         for label, key in (("极快（不模拟轨迹，直接两次点击）", "ultra"),
                            ("快", "fast"), ("中", "normal"), ("慢", "slow")):
-            self.combo_speed.addItem(label, key)
+            self.combo_speed.addItem(tr(label), key)
         i_s = self.combo_speed.findData(self.config.get("human_speed", "normal"))
         self.combo_speed.setCurrentIndex(i_s if i_s >= 0 else 2)
         form.addRow(self.chk_human)
-        form.addRow("轨迹算法", self.combo_path)
-        form.addRow("操作速度", self.combo_speed)
-        self.chk_sound = QCheckBox("音效（抬子/落子/吃子/将军/绝杀锣声）")
+        form.addRow(tr("轨迹算法"), self.combo_path)
+        form.addRow(tr("操作速度"), self.combo_speed)
+        self.chk_sound = QCheckBox(tr("音效（抬子/落子/吃子/将军/绝杀锣声）"))
         self.chk_sound.setChecked(self.config.get("sound", True))
-        self.chk_voice = QCheckBox("绝杀/困毙时语音播报")
+        self.chk_voice = QCheckBox(tr("绝杀/困毙时语音播报"))
         self.chk_voice.setChecked(self.config.get("voice", True))
         form.addRow(self.chk_sound)
         form.addRow(self.chk_voice)
-        note2 = QLabel("识别模型：中模型精度最好（推荐，默认），"
-                       "小模型更快但实测精度略低，"
-                       "万能带旋转适合有旋转/透视的棋盘截图。")
+        note2 = QLabel(tr("识别模型：中模型精度最好（推荐，默认），"
+                          "小模型更快但实测精度略低，"
+                          "万能带旋转适合有旋转/透视的棋盘截图。"))
         note2.setWordWrap(True)
         form.addRow(note2)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
@@ -2879,7 +2925,9 @@ class MainWindow(QMainWindow):
         form.addRow(bb)
 
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            language_changed = combo_lang.currentData() != get_language()
             self.config.update({
+                "language": combo_lang.currentData(),
                 "threads": sp_threads.value(),
                 "hash_mb": sp_hash.value(),
                 "multipv": sp_multipv.value(),
@@ -2900,7 +2948,10 @@ class MainWindow(QMainWindow):
             self.sound.set_enabled(self.config["sound"])
             self.sound.set_voice(self.config["voice"])
             self._apply_human_mouse()
-            self.statusBar().showMessage("设置已保存（线程/置换表重启后生效）")
+            if language_changed:
+                self.statusBar().showMessage(tr("设置已保存（界面语言重启软件后生效）"))
+            else:
+                self.statusBar().showMessage(tr("设置已保存（线程/置换表重启后生效）"))
 
     # ---------------------------------------------------------------- 生命周期
     def closeEvent(self, event):

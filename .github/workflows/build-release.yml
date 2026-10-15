@@ -1,0 +1,147 @@
+# Build the Windows portable app and attach it to a GitHub Release.
+#
+# Triggers:
+#   - Push a tag like v1.0.0  → creates/updates that release with the zip
+#   - workflow_dispatch       → enter a tag (e.g. v1.0.0) to cut a release
+#   - release published       → rebuild and upload if the release already exists
+#
+# Artifact: 象棋接管助手_发布包.zip  (exe + _internal with models, Pikafish, NNUE)
+
+name: Build Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0). Created if missing."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller py7zr
+
+      - name: Download Pikafish engine + NNUE
+        shell: bash
+        run: python tools/download_engine.py
+
+      - name: Download recognition models
+        shell: bash
+        run: python tools/download_models.py
+
+      - name: Verify engine and models
+        shell: bash
+        run: |
+          ls -la engine/bin/
+          ls -la models/*.onnx
+          test -n "$(ls engine/bin/*[Pp]ikafish*.exe 2>/dev/null || ls engine/bin/*.exe)"
+          test -f engine/bin/pikafish.nnue || test -n "$(ls engine/bin/*.nnue)"
+
+      - name: Resolve release tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using tag: $TAG"
+
+      - name: Build with PyInstaller
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -m PyInstaller --noconfirm --clean "象棋接管助手.spec"
+
+      - name: Pack release zip
+        shell: bash
+        run: |
+          APP="象棋接管助手"
+          test -f "dist/${APP}/${APP}.exe"
+          test -d "dist/${APP}/_internal/engine/bin"
+          test -d "dist/${APP}/_internal/models"
+          # Flatten nested py7zr paths if any (exe/nnue must sit directly under engine/bin)
+          find "dist/${APP}/_internal/engine/bin" -type f \( -name '*.exe' -o -name '*.nnue' \) \
+            -exec cp -n {} "dist/${APP}/_internal/engine/bin/" \; 2>/dev/null || true
+          python - <<'PY'
+          import shutil, os
+          app = "象棋接管助手"
+          zip_base = os.path.join("dist", f"{app}_发布包")
+          if os.path.exists(zip_base + ".zip"):
+              os.remove(zip_base + ".zip")
+          shutil.make_archive(zip_base, "zip", root_dir="dist", base_dir=app)
+          size = os.path.getsize(zip_base + ".zip") // 1024 // 1024
+          print(f"Created {zip_base}.zip ({size} MB)")
+          PY
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiangqi-assistant-windows
+          path: dist/象棋接管助手_发布包.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Ensure GitHub Release exists
+        if: github.event_name != 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "象棋接管助手 $TAG" \
+              --notes "Windows portable build (Vietnamese UI default). Unzip and run \`象棋接管助手.exe\`. Models + Pikafish engine are bundled.
+
+              **First launch:** Windows SmartScreen may warn (unsigned exe) — click More info → Run anyway.
+              **Antivirus:** Pikafish may be flagged as a false positive; allowlist if needed.
+              **Note:** Recognition models from VinXiangQi (GPL-3.0)."
+          fi
+
+      - name: Attach zip to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          gh release upload "$TAG" "dist/象棋接管助手_发布包.zip" --clobber
+          echo "Uploaded to https://github.com/${{ github.repository }}/releases/tag/$TAG"

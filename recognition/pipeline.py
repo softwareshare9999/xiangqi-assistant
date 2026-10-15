@@ -13,6 +13,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from i18n import tr
 from recognition.yolo import CLASS_TO_FEN, Detection, YoloDetector, default_model_path
 from recognition.yolo_board import (BoardResult, board_from_detections,
                                     board_plausibility)
@@ -130,32 +131,32 @@ def recognize_screenshot(img_bgr: np.ndarray,
                 # 棋子太少：可能是模型不认识该皮肤，继续尝试几何方案
                 geo = _recognize_geometric(img_bgr)
                 if geo is not None and geo.n_pieces > (br.n_pieces if br else 0):
-                    geo.warning = ("检测模型对这张截图只找到 "
-                                   f"{br.n_pieces if br else 0} 个棋子，已改用备用识别。"
-                                   "建议核对，或使用「手动摆局」。")
+                    geo.warning = tr("检测模型对这张截图只找到 {n} 个棋子，已改用备用识别。"
+                                     "建议核对，或使用「手动摆局」。",
+                                     n=br.n_pieces if br else 0)
                     return geo
                 if br is not None:
                     return _from_yolo(br, dets)
                 return RecognizeResult(grid=_empty(), source="none",
-                                       error="未在截图中定位到棋盘")
+                                       error=tr("未在截图中定位到棋盘"))
             except Exception as e:
                 return RecognizeResult(grid=_empty(), source="none",
-                                       error=f"检测模型执行失败: {e}")
+                                       error=tr("检测模型执行失败: {e}", e=e))
         # 模型不可用 -> 几何方案
         geo = _recognize_geometric(img_bgr)
         if geo is not None:
-            geo.warning = ("未找到检测模型（models/*.onnx），"
-                           "已改用备用识别，准确率较低。")
+            geo.warning = tr("未找到检测模型（models/*.onnx），"
+                             "已改用备用识别，准确率较低。")
             return geo
         return RecognizeResult(
             grid=_empty(), source="none",
-            error="未找到检测模型，且备用识别未能定位棋盘。"
-                  "请运行 tools/download_models.py，或使用「手动摆局」")
+            error=tr("未找到检测模型，且备用识别未能定位棋盘。"
+                     "请运行 tools/download_models.py，或使用「手动摆局」"))
 
     geo = _recognize_geometric(img_bgr)
     if geo is not None:
         return geo
-    return RecognizeResult(grid=_empty(), source="none", error="未能定位棋盘")
+    return RecognizeResult(grid=_empty(), source="none", error=tr("未能定位棋盘"))
 
 
 def _empty():
@@ -260,8 +261,8 @@ def _recognize_cropped_image(img_bgr: np.ndarray, cbox, det,
                               d.box[2] + x1, d.box[3] + y1))
                for d in dets2]
     res = _from_yolo(br2, shifted, skin_classes=len(templates or {}))
-    res.warning = ((res.warning + "；" if res.warning else "")
-                   + "已按棋盘区域裁剪后识别")
+    res.warning = ((res.warning + tr("；") if res.warning else "")
+                   + tr("已按棋盘区域裁剪后识别"))
     return res
 
 
@@ -269,12 +270,12 @@ def _from_yolo(br: BoardResult, dets: List[Detection],
                skin_classes: int = 0) -> RecognizeResult:
     warns = []
     if br.n_corrected:
-        warns.append(f"皮肤模板修正了 {br.n_corrected} 处模型的判断，请重点复核")
+        warns.append(tr("皮肤模板修正了 {n} 处模型的判断，请重点复核", n=br.n_corrected))
     if br.n_ambiguous:
-        warns.append(f"有 {br.n_ambiguous} 处多个棋子落到同一格")
+        warns.append(tr("有 {n} 处多个棋子落到同一格", n=br.n_ambiguous))
     if len(br.low_conf) > 3:
-        warns.append(f"有 {len(br.low_conf)} 个棋子置信度偏低")
-    warning = "；".join(warns) + "。" if warns else None
+        warns.append(tr("有 {n} 个棋子置信度偏低", n=len(br.low_conf)))
+    warning = tr("；").join(warns) + tr("。") if warns else None
     return RecognizeResult(grid=br.grid, red_at_top=br.red_at_top, source="yolo",
                            n_pieces=br.n_pieces, n_ambiguous=br.n_ambiguous,
                            detections=dets, board_box=br.board_box,

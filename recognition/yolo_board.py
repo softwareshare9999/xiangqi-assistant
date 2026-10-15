@@ -23,6 +23,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from core.board import Board, BLACK, RED, in_palace
+from i18n import tr
 from recognition.yolo import CLASS_TO_FEN, Detection
 from recognition import skin
 
@@ -227,7 +228,7 @@ def grid_plausibility(grid, stm: str = None) -> Tuple[bool, str]:
         # 仅做与行棋方无关的检查（子力数量/将帅存在与位置/兵卒底线）
         return _grid_checks_without_turn(board)
     if board.find_king(RED) is None or board.find_king(BLACK) is None:
-        return False, "缺少将/帅（疑似残缺帧）"
+        return False, tr("缺少将/帅（疑似残缺帧）")
     problem = board.validate_position()
     if problem:
         return False, problem
@@ -244,24 +245,25 @@ def _grid_checks_without_turn(board) -> Tuple[bool, str]:
         for letter in (up, up.lower()):
             n = counts.get(letter, 0)
             if n > lim:
-                who = "红方" if letter.isupper() else "黑方"
-                return False, f"{who}{name}超过 {lim} 个（当前 {n} 个）"
+                who = tr("红方") if letter.isupper() else tr("黑方")
+                return False, tr("{who}{name}超过 {lim} 个（当前 {n} 个）",
+                                 who=who, name=tr(name), lim=lim, n=n)
     if counts.get("K", 0) != 1:
-        return False, "缺少红帅（疑似残缺帧）"
+        return False, tr("缺少红帅（疑似残缺帧）")
     if counts.get("k", 0) != 1:
-        return False, "缺少黑将（疑似残缺帧）"
+        return False, tr("缺少黑将（疑似残缺帧）")
     if board.kings_face():
-        return False, "将帅照面（同一路无遮挡），不是合法局面"
+        return False, tr("将帅照面（同一路无遮挡），不是合法局面")
     for side in (RED, BLACK):
         k = board.find_king(side)
         if k is not None and not in_palace(k[0], k[1], side):
-            who = "红方" if side == RED else "黑方"
-            return False, f"{who}将/帅不在九宫内"
+            who = tr("红方") if side == RED else tr("黑方")
+            return False, tr("{who}将/帅不在九宫内", who=who)
     for c in range(9):
         if board.grid[9][c] == "P":
-            return False, "红兵不可能在己方底线"
+            return False, tr("红兵不可能在己方底线")
         if board.grid[0][c] == "p":
-            return False, "黑卒不可能在己方底线"
+            return False, tr("黑卒不可能在己方底线")
     return True, ""
 
 
@@ -274,7 +276,7 @@ def board_plausibility(res: BoardResult) -> Tuple[bool, str]:
     bx1, by1, bx2, by2 = res.board_box
     w, h = bx2 - bx1, by2 - by1
     if h <= 0 or not (0.72 <= w / h <= 1.18):
-        return False, f"棋盘框长宽比异常（{w / max(1, h):.2f}）"
+        return False, tr("棋盘框长宽比异常（{ratio:.2f}）", ratio=w / max(1, h))
     return grid_plausibility(res.grid)      # 帧校验不含行棋方，跳过轮次相关检查
 
 

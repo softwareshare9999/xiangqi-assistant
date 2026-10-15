@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from core.board import Board, Move, move_to_chinese, move_to_iccs
+from core.board import Board, Move, move_to_chinese, move_to_iccs, move_to_text
 
 HistoryEntry = Tuple[Move, Optional[str], str]  # (走法, 被吃棋子, 走之前的行棋方)
 
@@ -60,6 +60,13 @@ class Game:
 
     def move_list_chinese(self) -> List[str]:
         """逐着回放生成中文记法列表。"""
+        return self._move_list(move_to_chinese)
+
+    def move_list_text(self) -> List[str]:
+        """逐着回放生成当前界面语言的记法列表。"""
+        return self._move_list(move_to_text)
+
+    def _move_list(self, notation) -> List[str]:
         probe = Board(self.board.to_fen())
         # 先回退全部历史到起点
         for move, captured, mover in reversed(self.history):
@@ -69,6 +76,6 @@ class Game:
             probe.side_to_move = mover
         out = []
         for move, _, _ in self.history:
-            out.append(move_to_chinese(probe, move))
+            out.append(notation(probe, move))
             probe.make_move(move)
         return out
