@@ -181,9 +181,9 @@ class MainWindow(QMainWindow):
         controls2 = QHBoxLayout()
         self.chk_analyze = QCheckBox(tr("持续引擎分析"))
         self.chk_analyze.setChecked(True)
-        self.btn_settings = QPushButton("引擎设置...")
+        self.btn_settings = QPushButton(tr("引擎设置..."))
         # 静音开关（启动默认静音）
-        self.btn_mute = QPushButton("🔇 已静音")
+        self.btn_mute = QPushButton(tr("🔇 已静音"))
         self.btn_mute.setCheckable(True)
         self.btn_mute.setChecked(True)
         self.btn_mute.setToolTip("静音开关：关闭/开启音效与绝杀语音播报"
@@ -2927,7 +2927,7 @@ class MainWindow(QMainWindow):
         self.sound.set_voice(not muted)
         self._refresh_mute_btn()
         self.statusBar().showMessage(
-            "已静音（点「🔇 已静音」恢复声音）" if muted else "声音已开启",
+            tr("已静音（点「🔇 已静音」恢复声音）") if muted else tr("声音已开启"),
             4000)
 
     def _refresh_mute_btn(self) -> None:
@@ -2936,7 +2936,7 @@ class MainWindow(QMainWindow):
             return
         muted = not self.config.get("sound", False)
         self.btn_mute.setChecked(muted)          # 状态相同则不发信号
-        self.btn_mute.setText("🔇 已静音" if muted else "🔊 声音开")
+        self.btn_mute.setText(tr("🔇 已静音") if muted else tr("🔊 声音开"))
 
     def _apply_human_mouse(self) -> None:
         """把拟人化鼠标设置应用到输入层（点击时即时生效）。"""

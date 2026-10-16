@@ -357,7 +357,10 @@ MESSAGES = {
         "Đã lưu cài đặt (ngôn ngữ giao diện có hiệu lực sau khi khởi động lại phần mềm)",
     "设置已保存（线程/置换表重启后生效）":
         "Đã lưu cài đặt (số luồng/bảng băm có hiệu lực sau khi khởi động lại)",
-
+    "🔇 已静音": "🔇 Đã tắt tiếng",
+    "🔊 声音开": "🔊 Bật tiếng",
+    "已静音（点「🔇 已静音」恢复声音）": "Đã tắt tiếng (nhấn «🔇 Đã tắt tiếng» để bật lại âm thanh).",
+    "声音已开启": "Đã bật tiếng",
     # ------------------------------------------------------------ 手动摆局
     "点选下方棋子 → 点击棋盘落子；右键擦除。支持「移动」工具拖动已有棋子。":
         "Chọn quân bên dưới → bấm lên bàn cờ để đặt; chuột phải để xóa. "
