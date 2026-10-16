@@ -105,8 +105,10 @@ class MainWindow(QMainWindow):
         self.config = self._load_config()
         self.game = Game()
         self.engine: Optional[UciEngine] = None
-        self.sound = SoundManager(enabled=self.config.get("sound", True),
-                                  voice=self.config.get("voice", True))
+        # 启动默认静音（用户要求）：界面上的 🔊/🔇 按钮可随时开声
+        self.config["sound"] = False
+        self.config["voice"] = False
+        self.sound = SoundManager(enabled=False, voice=False)
         self.bridge = EngineBridge()
         self.bridge.info.connect(self._on_engine_info)
         self.bridge.bestmove.connect(self._on_engine_bestmove)
@@ -179,9 +181,16 @@ class MainWindow(QMainWindow):
         controls2 = QHBoxLayout()
         self.chk_analyze = QCheckBox(tr("持续引擎分析"))
         self.chk_analyze.setChecked(True)
-        self.btn_settings = QPushButton(tr("引擎设置..."))
+        self.btn_settings = QPushButton("引擎设置...")
+        # 静音开关（启动默认静音）
+        self.btn_mute = QPushButton("🔇 已静音")
+        self.btn_mute.setCheckable(True)
+        self.btn_mute.setChecked(True)
+        self.btn_mute.setToolTip("静音开关：关闭/开启音效与绝杀语音播报"
+                                 "（启动默认静音）")
         controls2.addWidget(self.chk_analyze)
         controls2.addWidget(self.btn_settings)
+        controls2.addWidget(self.btn_mute)
         right_layout.addLayout(controls2)
 
         # 一键接管
@@ -200,10 +209,14 @@ class MainWindow(QMainWindow):
         open_row = QHBoxLayout()
         open_row.addWidget(QLabel(tr("开局走法:")))
         self.combo_opening = QComboBox()
-        from core.openings import opening_label, opening_names
-        for name in opening_names():
-            self.combo_opening.addItem(opening_label(name), name)
-        idx0 = self.combo_opening.findData(self.config.get("opening", ""))
+        from core.openings import OPENINGS
+        for name, tip, _moves in OPENINGS:
+            label = name if not tip else f"{name}（{tip}）"
+            self.combo_opening.addItem(label or "默认（引擎选最优）", name)
+        # 启动默认"引擎最优"（用户要求：不要一开软件就是双铁滑车）。
+        # 中途选的开局当次会话有效，重启后回到引擎最优。
+        self.config["opening"] = ""
+        idx0 = self.combo_opening.findData("")
         self.combo_opening.setCurrentIndex(idx0 if idx0 >= 0 else 0)
         self.combo_opening.setToolTip(
             tr("接管期间：轮到我方时优先走该开局的着法，走完（或不可行）后\n"
@@ -301,6 +314,7 @@ class MainWindow(QMainWindow):
         self.btn_undo.clicked.connect(self._undo)
         self.btn_flip.clicked.connect(self._flip)
         self.btn_settings.clicked.connect(self._open_settings)
+        self.btn_mute.toggled.connect(self._toggle_mute)
         self.chk_analyze.toggled.connect(self._toggle_analysis)
         self.rb_mode_play.toggled.connect(self._on_mode_changed)
         self.btn_battle.clicked.connect(self._toggle_battle)
@@ -311,6 +325,7 @@ class MainWindow(QMainWindow):
         self.btn_takeover.clicked.connect(self._toggle_takeover)
         self.takeoverFound.connect(self._on_takeover_found)
         self.takeoverStatus.connect(self._sync_status)
+        self._refresh_mute_btn()          # 初始状态与配置一致（默认静音）
 
         self._sync_hwnd = None
         self._sct = None
@@ -1564,6 +1579,7 @@ class MainWindow(QMainWindow):
         self._grab_heal_at = 0.0
         self._relocate_at = 0.0
         self._search_root_fen = None
+        self._shift_guard_n = 0
         self._drop_ponder()
         self.observer.reset()
 
@@ -1581,11 +1597,12 @@ class MainWindow(QMainWindow):
                 pass
 
         try:
-            _fp_path = os.path.join(
+            _base = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "recognition", "yolo_board.py")
-            _fp = time.strftime("%m-%d %H:%M",
-                                time.localtime(os.path.getmtime(_fp_path)))
+                "recognition")
+            _fp = time.strftime("%m-%d %H:%M", time.localtime(max(
+                os.path.getmtime(os.path.join(_base, f))
+                for f in ("yolo_board.py", "pipeline.py", "skin.py"))))
         except Exception:
             _fp = "?"
         log(f"开始接管：自动寻找含棋盘的窗口（pid={os.getpid()}，"
@@ -1626,8 +1643,12 @@ class MainWindow(QMainWindow):
                 wins.append(w)
         if rejected:
             log("未入候选 " + str(len(rejected)) + " 个: " + " | ".join(rejected))
-        log("进入候选 " + str(len(wins)) + " 个: "
+        # 探测优先级：模拟器（MuMu 等）先试——找不到棋盘再退回试浏览器
+        # 等其它窗口（JJ 网页版等）；同组内大窗口优先（更可能是对局界面）
+        wins.sort(key=lambda w: self._probe_priority(w["title"], w.get("rect")))
+        log("进入候选 " + str(len(wins)) + " 个（探测顺序）: "
             + "; ".join(f"“{w['title'][:20]}”" for w in wins))
+        self._probe_tried_emu = False
         if not wins:
             log("探测结束：没有可探测的窗口")
             minimized_n = sum(1 for r in rejected if "已最小化" in r)
@@ -1643,8 +1664,16 @@ class MainWindow(QMainWindow):
         try:
             for i, winfo in enumerate(wins):
                 title = winfo["title"][:30]
+                if self._looks_like_emulator(winfo["title"]):
+                    self._probe_tried_emu = True
+                elif (getattr(self, "_probe_tried_emu", False)
+                        and not getattr(self, "_probe_emu_note", False)):
+                    self._probe_emu_note = True
+                    log("模拟器窗口未找到棋盘——继续尝试浏览器等其它窗口")
+                    self.takeoverStatus.emit(
+                        "模拟器里没找到棋盘，继续查找浏览器等其它窗口…")
                 self.takeoverStatus.emit(
-                    tr("探测窗口 {i}/{n}：{title} …", i=i + 1, n=len(wins), title=title))
+                    f"探测窗口 {i + 1}/{len(wins)}：{title} …")
                 grids = []
                 attempts = []
                 # 最多取 3 帧：任意相邻两帧一致即认定稳定（避开动画）。
@@ -1754,12 +1783,13 @@ class MainWindow(QMainWindow):
                     return           # 已采纳并发出 takeoverFound，结束探测
             if fail_reasons:
                 self.takeoverStatus.emit(
-                    tr("未找到含棋盘的窗口（{reason}）。"
-                       "请确认棋盘完整可见、无弹窗遮挡后重试。", reason=fail_reasons[-1]))
+                    f"未找到含棋盘的窗口（{fail_reasons[-1]}）。"
+                    f"已先试模拟器、再试浏览器等其它窗口——"
+                    f"请确认棋盘完整可见、无弹窗遮挡后重试。")
             else:
                 self.takeoverStatus.emit(
-                    tr("未找到含棋盘的窗口。请确认已进入 JJ 对局界面"
-                       "（不是大厅），窗口未最小化，再重试。"))
+                    "未找到含棋盘的窗口（已先试模拟器、再试浏览器等其它窗口）。"
+                    "请确认已进入 JJ 对局界面（不是大厅），窗口未最小化，再重试。")
             log("探测结束：未找到含棋盘的窗口。原始窗口全量清单：")
             try:
                 for w in capture_win.list_all_toplevel_windows():
@@ -2018,6 +2048,21 @@ class MainWindow(QMainWindow):
         return any(k in t for k in (
             "mumu", "模拟器", "安卓设备", "雷电", "ldplayer", "bluestacks",
             "nox", "夜神", "memu", "逍遥"))
+
+    @staticmethod
+    def _probe_priority(title: str, rect=None):
+        """一键接管的窗口探测顺序：(组, -面积)。
+
+        组 0 = 模拟器（MuMu 等，优先——裁剪/点击逻辑不变）；
+        组 1 = 其它窗口（浏览器里的 JJ 网页版等兜底）。
+        同组内大窗口优先（更可能是对局界面）。
+        """
+        emu = 0 if MainWindow._looks_like_emulator(title) else 1
+        if rect:
+            area = max(0, rect[2] - rect[0]) * max(0, rect[3] - rect[1])
+        else:
+            area = 0
+        return (emu, -area)
 
     def _grab_fail_heal(self) -> None:
         """抓屏失败的自愈：最小化 -> 自动恢复；句柄失效 -> 静默重定位。
@@ -2608,6 +2653,43 @@ class MainWindow(QMainWindow):
                        f"故应由该方走棋（原推断有误）")
         return True
 
+    @staticmethod
+    def _detect_systematic_shift(local_grid, observed, max_shift: int = 2):
+        """观测帧是否只是本地棋盘的整体偏移（遮挡导致的映射伪影）。
+
+        返回描述字符串（如 "(行+0, 列+1)"）；不疑似偏移返回 None。
+        判据：某个非零偏移的吻合度明显高于原地吻合度。遮挡只会"少棋子"、
+        不会凭空多出，因此无法解释的观测棋子额外扣分（权重 2）。
+        """
+        def fit(dr, dc):
+            matched = extra = 0
+            for r in range(10):
+                for c in range(9):
+                    obs_p = observed[r][c]
+                    if obs_p is None:
+                        continue
+                    sr, sc = r - dr, c - dc
+                    local_p = (local_grid[sr][sc]
+                               if (0 <= sr < 10 and 0 <= sc < 9) else None)
+                    if local_p == obs_p:
+                        matched += 1
+                    else:
+                        extra += 1
+            return matched - 2 * extra
+
+        base = fit(0, 0)
+        best_shift, best_score = None, base
+        for dr in range(-max_shift, max_shift + 1):
+            for dc in range(-max_shift, max_shift + 1):
+                if dr == 0 and dc == 0:
+                    continue
+                sc_ = fit(dr, dc)
+                if sc_ > best_score:
+                    best_shift, best_score = (dr, dc), sc_
+        if best_shift is not None and best_score >= base + 3 and best_score >= 6:
+            return f"(行{best_shift[0]:+d}, 列{best_shift[1]:+d})"
+        return None
+
     def _auto_resync_to_window(self, res, mover_side: Optional[str]):
         """本地棋盘与 JJ 脱节时，以 JJ 窗口局面为准自动重新同步（自愈）。
 
@@ -2624,6 +2706,24 @@ class MainWindow(QMainWindow):
             self._sync_log(f"拒绝采纳残缺帧（{reason}）——等待完整帧")
             self._sync_status(tr("捕获画面不完整，等待下一帧自动校准…"))
             return
+        # 系统性偏移守卫：弹窗/横幅遮住棋盘某条边时，模型会把棋盘框拟合到
+        # "可见的那部分网格"上——整盘偏移一格却依然"看着合法"（比例和将帅
+        # 位置都过得去）。这种帧绝不能当真相采纳（实际发生过：整体左移一格
+        # 被采纳，本地棋盘全乱）。遮挡消失后画面自然一致，无需采纳。
+        shift = self._detect_systematic_shift(self.game.board.grid, res.grid)
+        if shift is not None:
+            n_ref = getattr(self, "_shift_guard_n", 0) + 1
+            self._shift_guard_n = n_ref
+            if n_ref < 8:
+                self._last_auto_resync = 0.0     # 不限频：下一帧继续判定
+                self._sync_log(f"疑似遮挡导致识别整体偏移 {shift}——忽略本帧"
+                               f"（第 {n_ref} 次）")
+                self._sync_status("画面疑似被弹窗遮挡、识别发生整体偏移，"
+                                  "等待画面恢复…", sticky=True)
+                return
+            self._sync_log(f"识别偏移已持续 {n_ref} 帧——不再等待，"
+                           f"仍按 JJ 局面采纳")
+        self._shift_guard_n = 0
         self._last_auto_resync = now
         # 重同步后，此前记录的"抬子等待"状态已失效
         self._lift_key = None
@@ -2819,6 +2919,25 @@ class MainWindow(QMainWindow):
                    side=side))
 
     # ---------------------------------------------------------------- 设置
+    def _toggle_mute(self, muted: bool) -> None:
+        """静音开关：静音时关闭音效与绝杀语音播报，开声时一并恢复。"""
+        self.config["sound"] = not muted
+        self.config["voice"] = not muted
+        self.sound.set_enabled(not muted)
+        self.sound.set_voice(not muted)
+        self._refresh_mute_btn()
+        self.statusBar().showMessage(
+            "已静音（点「🔇 已静音」恢复声音）" if muted else "声音已开启",
+            4000)
+
+    def _refresh_mute_btn(self) -> None:
+        """按当前配置刷新静音按钮的文字/勾选状态。"""
+        if not hasattr(self, "btn_mute"):
+            return
+        muted = not self.config.get("sound", False)
+        self.btn_mute.setChecked(muted)          # 状态相同则不发信号
+        self.btn_mute.setText("🔇 已静音" if muted else "🔊 声音开")
+
     def _apply_human_mouse(self) -> None:
         """把拟人化鼠标设置应用到输入层（点击时即时生效）。"""
         try:
@@ -2947,6 +3066,7 @@ class MainWindow(QMainWindow):
                 self.engine.set_engine_options(multipv=self.config["multipv"])
             self.sound.set_enabled(self.config["sound"])
             self.sound.set_voice(self.config["voice"])
+            self._refresh_mute_btn()
             self._apply_human_mouse()
             if language_changed:
                 self.statusBar().showMessage(tr("设置已保存（界面语言重启软件后生效）"))
