@@ -209,10 +209,9 @@ class MainWindow(QMainWindow):
         open_row = QHBoxLayout()
         open_row.addWidget(QLabel(tr("开局走法:")))
         self.combo_opening = QComboBox()
-        from core.openings import OPENINGS
-        for name, tip, _moves in OPENINGS:
-            label = name if not tip else f"{name}（{tip}）"
-            self.combo_opening.addItem(label or "默认（引擎选最优）", name)
+        from core.openings import opening_label, opening_names
+        for name in opening_names():            
+            self.combo_opening.addItem(opening_label(name), name)
         # 启动默认"引擎最优"（用户要求：不要一开软件就是双铁滑车）。
         # 中途选的开局当次会话有效，重启后回到引擎最优。
         self.config["opening"] = ""
